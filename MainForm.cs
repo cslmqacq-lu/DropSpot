@@ -664,7 +664,7 @@ public sealed class MainForm : Form
         _folderList.SuspendLayout();
         try
         {
-            var width = Math.Max(320, _folderList.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8);
+            var width = Math.Max(1, _folderList.ClientSize.Width - 4);
             var orderedFolders = _folders.Values.OrderByDescending(item => item.LastTime).ToArray();
             var activePaths = orderedFolders.Select(folder => folder.FolderPath).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
@@ -762,7 +762,7 @@ public sealed class MainForm : Form
         _favoriteList.SuspendLayout();
         try
         {
-            var width = Math.Max(320, _favoriteList.ClientSize.Width - SystemInformation.VerticalScrollBarWidth - 8);
+            var width = Math.Max(1, _favoriteList.ClientSize.Width - 4);
             var ordered = _favorites.OrderedItems;
             var activePaths = ordered.Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
 
