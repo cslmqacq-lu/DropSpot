@@ -12,6 +12,7 @@ public sealed class MainForm : Form
     private const string PauseIcon = "\uE769";
     private const string ClearIcon = "\uE74D";
     private const string SettingsIcon = "\uE713";
+    private const string AddIcon = "\uE710";
 
     private readonly FileMonitorService _monitor = new();
     private readonly Dictionary<string, FolderActivity> _folders = new(StringComparer.OrdinalIgnoreCase);
@@ -29,10 +30,13 @@ public sealed class MainForm : Form
 
     private readonly FlickerFreeFlowLayoutPanel _folderList = new();
     private readonly FlickerFreeFlowLayoutPanel _favoriteList = new();
+    private readonly Panel _favoriteHost = new();
     private readonly Label _statusLabel = new();
     private readonly Label _emptyLabel = new();
+    private readonly Label _favoriteEmptyLabel = new();
     private readonly Button _toggleButton = new();
     private readonly Button _clearButton = new();
+    private readonly Button _addFavoriteButton = new();
     private readonly Button _activeTabButton = new();
     private readonly Button _favoriteTabButton = new();
     private readonly string? _settingsWarning;
@@ -273,12 +277,35 @@ public sealed class MainForm : Form
         _folderList.Resize += (_, _) => RenderFolders();
         listHost.Controls.Add(_folderList);
 
+        _favoriteHost.Dock = DockStyle.Fill;
+        _favoriteHost.BackColor = Theme.Window;
+        _favoriteHost.Visible = false;
+        listHost.Controls.Add(_favoriteHost);
+
+        var favoriteLayout = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            RowCount = 2,
+            ColumnCount = 1,
+            BackColor = Theme.Window
+        };
+        favoriteLayout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        favoriteLayout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+        favoriteLayout.RowStyles.Add(new RowStyle(SizeType.Absolute, 42F));
+        _favoriteHost.Controls.Add(favoriteLayout);
+
+        var favoriteContentHost = new Panel
+        {
+            Dock = DockStyle.Fill,
+            BackColor = Theme.Window
+        };
+        favoriteLayout.Controls.Add(favoriteContentHost, 0, 0);
+
         _favoriteList.Dock = DockStyle.Fill;
         _favoriteList.FlowDirection = FlowDirection.TopDown;
         _favoriteList.WrapContents = false;
         _favoriteList.AutoScroll = true;
         _favoriteList.BackColor = Theme.Window;
-        _favoriteList.Visible = false;
         _favoriteList.Resize += (_, _) =>
         {
             if (_showFavorites)
@@ -286,7 +313,32 @@ public sealed class MainForm : Form
                 RenderFavorites();
             }
         };
-        listHost.Controls.Add(_favoriteList);
+        favoriteContentHost.Controls.Add(_favoriteList);
+
+        _favoriteEmptyLabel.Text = "暂无收藏文件夹";
+        _favoriteEmptyLabel.Dock = DockStyle.Fill;
+        _favoriteEmptyLabel.ForeColor = Theme.Muted;
+        _favoriteEmptyLabel.BackColor = Theme.Window;
+        _favoriteEmptyLabel.TextAlign = ContentAlignment.MiddleCenter;
+        _favoriteEmptyLabel.Font = new Font("Microsoft YaHei UI", 10F);
+        _favoriteEmptyLabel.Visible = false;
+        favoriteContentHost.Controls.Add(_favoriteEmptyLabel);
+
+        _addFavoriteButton.Text = AddIcon;
+        _addFavoriteButton.Dock = DockStyle.Fill;
+        _addFavoriteButton.Margin = Padding.Empty;
+        _addFavoriteButton.FlatStyle = FlatStyle.Flat;
+        _addFavoriteButton.FlatAppearance.BorderSize = 1;
+        _addFavoriteButton.FlatAppearance.BorderColor = Theme.BorderStrong;
+        _addFavoriteButton.FlatAppearance.MouseOverBackColor = Theme.Card;
+        _addFavoriteButton.FlatAppearance.MouseDownBackColor = Theme.CardAlt;
+        _addFavoriteButton.BackColor = Theme.Window;
+        _addFavoriteButton.ForeColor = Theme.Text;
+        _addFavoriteButton.Font = new Font("Segoe MDL2 Assets", 13F);
+        _addFavoriteButton.TabStop = false;
+        _addFavoriteButton.Click += (_, _) => OpenAddFavoriteDialog();
+        favoriteLayout.Controls.Add(_addFavoriteButton, 0, 1);
+        _toolTip.SetToolTip(_addFavoriteButton, "添加收藏文件夹");
 
         _emptyLabel.Text = "暂无活跃文件夹";
         _emptyLabel.Dock = DockStyle.Fill;
@@ -758,14 +810,14 @@ public sealed class MainForm : Form
     {
         _showFavorites = showFavorites;
         _folderList.Visible = !showFavorites;
-        _favoriteList.Visible = showFavorites;
+        _favoriteHost.Visible = showFavorites;
         _clearButton.Visible = !showFavorites;
         ApplyTabStyle(_activeTabButton, !showFavorites);
         ApplyTabStyle(_favoriteTabButton, showFavorites);
 
         if (showFavorites)
         {
-            _favoriteList.BringToFront();
+            _favoriteHost.BringToFront();
             RenderFavorites();
         }
         else
@@ -779,18 +831,36 @@ public sealed class MainForm : Form
 
     private void UpdateEmptyState()
     {
-        var empty = _showFavorites ? _favorites.Count == 0 : _folders.Count == 0;
-        _emptyLabel.Text = _showFavorites ? "暂无收藏文件夹" : "暂无活跃文件夹";
-        _emptyLabel.Visible = empty;
-        if (empty)
+        var activeEmpty = _folders.Count == 0;
+        var favoriteEmpty = _favorites.Count == 0;
+        _emptyLabel.Text = "暂无活跃文件夹";
+        _emptyLabel.Visible = !_showFavorites && activeEmpty;
+        _favoriteEmptyLabel.Visible = _showFavorites && favoriteEmpty;
+        if (_emptyLabel.Visible)
         {
             _emptyLabel.BringToFront();
+        }
+
+        if (_favoriteEmptyLabel.Visible)
+        {
+            _favoriteEmptyLabel.BringToFront();
         }
     }
 
     private void AddFavorite(FolderActivity folder)
     {
         AddFavoritePath(folder.FolderPath);
+    }
+
+    private void OpenAddFavoriteDialog()
+    {
+        using var dialog = new AddFavoriteForm();
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        AddFavoritePath(dialog.SelectedPath);
     }
 
     private void AddFavoritePath(string path)
@@ -812,6 +882,8 @@ public sealed class MainForm : Form
         {
             RenderFavorites();
         }
+
+        UpdateEmptyState();
 
         SetStatus($"已收藏 {displayName}");
     }
