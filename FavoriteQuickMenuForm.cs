@@ -36,9 +36,9 @@ internal sealed class FavoriteQuickMenuForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        BackColor = Color.Magenta;
-        TransparencyKey = Color.Magenta;
-        Opacity = _opacityPercent / 100D;
+        BackColor = Color.Black;
+        TransparencyKey = Color.Empty;
+        Opacity = 1D;
         Width = ItemWidth;
         Deactivate += (_, _) => _scheduleCollapse();
     }
@@ -61,12 +61,13 @@ internal sealed class FavoriteQuickMenuForm : Form
     {
         _backgroundColor = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
         _opacityPercent = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent);
-        Opacity = _opacityPercent / 100D;
+        Opacity = 1D;
         foreach (var item in _items)
         {
             item.ApplyAppearance(_backgroundColor);
         }
 
+        WindowTint.Apply(this, _backgroundColor, _opacityPercent);
         Invalidate(invalidateChildren: true);
     }
 
@@ -102,6 +103,12 @@ internal sealed class FavoriteQuickMenuForm : Form
         base.Dispose(disposing);
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        WindowTint.Apply(this, _backgroundColor, _opacityPercent);
+    }
+
     private void SyncItems()
     {
         if (_items.Count != _favorites.Count)
@@ -129,6 +136,28 @@ internal sealed class FavoriteQuickMenuForm : Form
             _items[index].Location = new Point(0, Height - (index + 1) * ItemHeight - index * ItemGap);
             _items[index].UpdateFavorite(_favorites[index], index + 2);
         }
+
+        UpdateWindowRegion();
+    }
+
+    private void UpdateWindowRegion()
+    {
+        Region?.Dispose();
+        if (_items.Count == 0)
+        {
+            Region = null;
+            return;
+        }
+
+        var combined = new Region(new Rectangle(0, 0, 0, 0));
+        foreach (var item in _items)
+        {
+            using var itemRegion = FloatingFolderForm.CreateNativeRoundedRegion(item.ClientSize, 10);
+            itemRegion.Translate(item.Left, item.Top);
+            combined.Union(itemRegion);
+        }
+
+        Region = combined;
     }
 
     private void DisposeItems()
@@ -169,7 +198,7 @@ internal sealed class FavoriteQuickMenuForm : Form
             _hideInfo = hideInfo;
 
             Size = new Size(ItemWidth, ItemHeight);
-            BackColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
+            BackColor = Color.Transparent;
             DoubleBuffered = true;
             Cursor = Cursors.Hand;
 
@@ -221,7 +250,7 @@ internal sealed class FavoriteQuickMenuForm : Form
 
         public void ApplyAppearance(Color backgroundColor)
         {
-            BackColor = backgroundColor;
+            BackColor = Color.Transparent;
             _name.ForeColor = Theme.TextForBackground(backgroundColor);
             _rank.ForeColor = Theme.MutedTextForBackground(backgroundColor);
             Invalidate(invalidateChildren: true);
@@ -279,6 +308,8 @@ internal sealed class FavoriteInfoPopupForm : Form
     private readonly Label _time = new();
     private readonly Font _nameFont = new("Microsoft YaHei UI", 9F, FontStyle.Bold);
     private readonly Font _detailFont = new("Microsoft YaHei UI", 7.5F);
+    private Color _backgroundColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
+    private int _opacityPercent = AppSettings.DefaultFloatingOpacityPercent;
     public FavoriteInfoPopupForm()
     {
         FormBorderStyle = FormBorderStyle.None;
@@ -287,13 +318,13 @@ internal sealed class FavoriteInfoPopupForm : Form
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
         Size = new Size(PopupWidth, PopupHeight);
-        BackColor = Color.Fuchsia;
-        TransparencyKey = Color.Fuchsia;
-        Opacity = AppSettings.DefaultFloatingOpacityPercent / 100D;
+        BackColor = Color.Black;
+        TransparencyKey = Color.Empty;
+        Opacity = 1D;
         DoubleBuffered = true;
 
         _surface.Bounds = ClientRectangle;
-        _surface.BackColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
+        _surface.BackColor = Color.Transparent;
         _surface.Region = FloatingFolderForm.CreateNativeRoundedRegion(_surface.ClientSize, 9);
         Controls.Add(_surface);
 
@@ -319,17 +350,25 @@ internal sealed class FavoriteInfoPopupForm : Form
 
     public void ApplyAppearance(Color backgroundColor, int opacityPercent)
     {
-        var color = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
-        Opacity = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent) / 100D;
-        _surface.BackColor = color;
-        _name.ForeColor = Theme.TextForBackground(color);
-        _path.ForeColor = Theme.MutedTextForBackground(color);
-        _time.ForeColor = Theme.HighlightTextForBackground(color);
+        _backgroundColor = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
+        _opacityPercent = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent);
+        Opacity = 1D;
+        _surface.BackColor = Color.Transparent;
+        _name.ForeColor = Theme.TextForBackground(_backgroundColor);
+        _path.ForeColor = Theme.MutedTextForBackground(_backgroundColor);
+        _time.ForeColor = Theme.HighlightTextForBackground(_backgroundColor);
+        WindowTint.Apply(this, _backgroundColor, _opacityPercent);
         _surface.Invalidate(invalidateChildren: true);
     }
 
-    internal Color SurfaceColor => _surface.BackColor;
-    internal int AppearanceOpacityPercent => (int)Math.Round(Opacity * 100D);
+    internal Color SurfaceColor => _backgroundColor;
+    internal int AppearanceOpacityPercent => _opacityPercent;
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        WindowTint.Apply(this, _backgroundColor, _opacityPercent);
+    }
 
     protected override bool ShowWithoutActivation => true;
 
@@ -387,6 +426,8 @@ internal sealed class FavoriteInfoPopupForm : Form
         _surface.Bounds = ClientRectangle;
         _surface.Region?.Dispose();
         _surface.Region = FloatingFolderForm.CreateNativeRoundedRegion(_surface.ClientSize, 9);
+        Region?.Dispose();
+        Region = FloatingFolderForm.CreateNativeRoundedRegion(ClientSize, 9);
     }
 
     private static string RelativeTime(DateTime time)

@@ -6,7 +6,6 @@ namespace DiskWriteWatcher;
 public sealed class FloatingFolderForm : Form
 {
     private const int CornerRadius = 12;
-    private static readonly Color TransparentColor = Color.Fuchsia;
     private readonly Action _openLatestFolder;
     private readonly Action<string> _openFavoriteFolder;
     private readonly Action _restoreMainWindow;
@@ -84,9 +83,9 @@ public sealed class FloatingFolderForm : Form
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
         Size = new Size(208, 86);
-        BackColor = TransparentColor;
-        TransparencyKey = TransparentColor;
-        Opacity = _floatingOpacity;
+        BackColor = Color.Black;
+        TransparencyKey = Color.Empty;
+        Opacity = 1D;
         DoubleBuffered = true;
 
         BuildUi();
@@ -196,10 +195,10 @@ public sealed class FloatingFolderForm : Form
         _dividerColor = Theme.BorderForBackground(_surfaceColor);
         _floatingOpacity = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent) / 100D;
 
-        Opacity = _floatingOpacity;
-        _surface.BackColor = _surfaceColor;
-        _activeSegment.BackColor = _surfaceColor;
-        _favoriteSegment.BackColor = _surfaceColor;
+        Opacity = 1D;
+        _surface.BackColor = Color.Transparent;
+        _activeSegment.BackColor = Color.Transparent;
+        _favoriteSegment.BackColor = Color.Transparent;
         var textColor = Theme.TextForBackground(_surfaceColor);
         var mutedColor = Theme.MutedTextForBackground(_surfaceColor);
         _activeName.ForeColor = textColor;
@@ -207,6 +206,7 @@ public sealed class FloatingFolderForm : Form
         _chevron.ForeColor = mutedColor;
         _quickMenu.ApplyAppearance(_surfaceColor, opacityPercent);
         _infoPopup.ApplyAppearance(_surfaceColor, opacityPercent);
+        WindowTint.Apply(this, _surfaceColor, opacityPercent);
         _surface.Invalidate();
     }
 
@@ -236,6 +236,7 @@ public sealed class FloatingFolderForm : Form
         _ = DwmSetWindowAttribute(Handle, 33, ref noSystemCorner, sizeof(int));
         var noSystemBorder = unchecked((int)0xFFFFFFFE);
         _ = DwmSetWindowAttribute(Handle, 34, ref noSystemBorder, sizeof(int));
+        WindowTint.Apply(this, _surfaceColor, AppearanceOpacityPercent);
     }
 
     private void PaintSurface(object? sender, PaintEventArgs e)
@@ -274,7 +275,7 @@ public sealed class FloatingFolderForm : Form
     private void BuildUi()
     {
         _surface.Bounds = ClientRectangle;
-        _surface.BackColor = _surfaceColor;
+        _surface.BackColor = Color.Transparent;
         _surface.Paint += PaintSurface;
         Controls.Add(_surface);
 
@@ -369,10 +370,8 @@ public sealed class FloatingFolderForm : Form
     private void ConfigureSegment(Panel panel, Rectangle bounds)
     {
         panel.Bounds = bounds;
-        panel.BackColor = _surfaceColor;
+        panel.BackColor = Color.Transparent;
         panel.Cursor = Cursors.Hand;
-        panel.MouseEnter += (_, _) => panel.BackColor = _hoverColor;
-        panel.MouseLeave += (_, _) => panel.BackColor = _surfaceColor;
     }
 
     private void ConfigureFolderIcon(PictureBox icon, Point location)
@@ -613,21 +612,12 @@ public sealed class FloatingFolderForm : Form
         }
 
         _quickMenu.PrepareForShow();
-        _quickMenu.Opacity = 0;
         PositionFavoriteMenu();
         _quickMenu.Show();
         PositionFavoriteMenu();
         _quickMenu.BringToFront();
         _chevron.Text = "\uE70E";
         ScheduleAutoCollapse();
-        BeginInvoke(() =>
-        {
-            if (_quickMenu.Visible)
-            {
-                PositionFavoriteMenu();
-                _quickMenu.Opacity = _floatingOpacity;
-            }
-        });
     }
 
     private void PositionFavoriteMenu()
