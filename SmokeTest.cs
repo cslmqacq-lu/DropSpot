@@ -241,8 +241,8 @@ public static class SmokeTest
     {
         var store = new FavoriteFolderStore();
         var start = new DateTime(2026, 1, 1, 8, 0, 0);
-        if (!store.Add(@"C:\favorites\project", start)
-            || !store.Add(@"C:\favorites\project\assets", start.AddMinutes(1))
+        if (!store.Add(@"C:\favorites\project\assets", start)
+            || !store.Add(@"C:\favorites\project", start.AddMinutes(1))
             || store.Add(@"c:\FAVORITES\PROJECT\", start.AddMinutes(2)))
         {
             return 25;
@@ -255,7 +255,10 @@ public static class SmokeTest
         }
 
         var updated = store.OrderedItems;
-        if (updated.Count != 2 || updated.Any(item => item.LastActivity != activity))
+        if (updated.Count != 2
+            || updated.Any(item => item.LastActivity != activity)
+            || updated[0].Path != @"C:\favorites\project\assets"
+            || updated[1].Path != @"C:\favorites\project")
         {
             return 27;
         }

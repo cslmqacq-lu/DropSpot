@@ -8,6 +8,7 @@ public sealed class FavoriteFolderStore
 
     public IReadOnlyList<FavoriteFolder> OrderedItems => _items.Values
         .OrderByDescending(item => item.LastActivity)
+        .ThenByDescending(item => item.Path.Length)
         .ThenByDescending(item => item.AddedAt)
         .ThenBy(item => item.DisplayName, StringComparer.OrdinalIgnoreCase)
         .ToArray();
