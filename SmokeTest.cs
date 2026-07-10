@@ -187,7 +187,8 @@ public static class SmokeTest
                 }
             },
             FloatingLeft = 123,
-            FloatingTop = 456
+            FloatingTop = 456,
+            FloatingFavoriteCount = 8
         };
         original.SaveTo(settingsPath);
 
@@ -208,7 +209,10 @@ public static class SmokeTest
             || recovered.FavoriteFolders.Count != 1
             || recovered.FavoriteFolders[0].Path != @"C:\Projects"
             || recovered.FloatingLeft != 123
-            || recovered.FloatingTop != 456)
+            || recovered.FloatingTop != 456
+            || recovered.FloatingFavoriteCount != 8
+            || AppSettings.NormalizeFloatingFavoriteCount(0) != 1
+            || AppSettings.NormalizeFloatingFavoriteCount(99) != 14)
         {
             return 30;
         }
@@ -308,7 +312,7 @@ public static class SmokeTest
                 _ => { },
                 () => true);
             floating.CreateControl();
-            floating.UpdateFavorites(Enumerable.Range(0, 5)
+            floating.UpdateFavorites(Enumerable.Range(0, 14)
                 .Select(index => new FavoriteFolder(
                     $@"C:\favorites\folder-{index}",
                     DateTime.Now,
@@ -323,7 +327,7 @@ public static class SmokeTest
                 () => { },
                 _ => { },
                 contextMenu);
-            var visibleFavorites = Enumerable.Range(1, 4)
+            var visibleFavorites = Enumerable.Range(1, 13)
                 .Select(index => new FavoriteFolder(
                     $@"C:\favorites\folder-{index}",
                     DateTime.Now,
@@ -338,7 +342,16 @@ public static class SmokeTest
             infoPopup.ShowFor(visibleFavorites[0], new Rectangle(quickMenu.Right, quickMenu.Bottom - 70, 101, 70));
             quickMenu.Refresh();
             infoPopup.Refresh();
-            if (!quickMenu.Visible || quickMenu.ItemCount != 4 || !infoPopup.Visible)
+            var itemTops = quickMenu.ItemTops;
+            var orderedBottomUp = itemTops
+                .Zip(itemTops.Skip(1), (lower, upper) => lower > upper)
+                .All(isOrdered => isOrdered);
+            if (!quickMenu.Visible
+                || floating.FavoriteCount != 14
+                || quickMenu.ItemCount != 13
+                || itemTops.Count != 13
+                || !orderedBottomUp
+                || !infoPopup.Visible)
             {
                 return 41;
             }
@@ -390,7 +403,7 @@ public static class SmokeTest
                         width: 450 + iteration % 3);
                 }
 
-                floating.UpdateFavorites(Enumerable.Range(0, 5)
+                floating.UpdateFavorites(Enumerable.Range(0, 14)
                     .Select(index => new FavoriteFolder(
                         $@"C:\favorites\folder-{(index + iteration) % 5}",
                         DateTime.Now,
@@ -399,9 +412,9 @@ public static class SmokeTest
 
                 if (iteration % 5 == 0)
                 {
-                    quickMenu.UpdateFavorites(Enumerable.Range(0, 4)
+                    quickMenu.UpdateFavorites(Enumerable.Range(0, 13)
                         .Select(index => new FavoriteFolder(
-                            $@"C:\favorites\folder-{(index + iteration / 5) % 4 + 1}",
+                            $@"C:\favorites\folder-{(index + iteration / 5) % 13 + 1}",
                             DateTime.Now,
                             DateTime.Now.AddMilliseconds(iteration)))
                         .ToArray());
@@ -410,7 +423,7 @@ public static class SmokeTest
             }
 
             var afterUpdates = GetGuiResources(Process.GetCurrentProcess().Handle, 0);
-            return afterUpdates <= baseline + 10 && quickMenu.ItemCount == 4 ? 0 : 40;
+            return afterUpdates <= baseline + 10 && quickMenu.ItemCount == 13 ? 0 : 40;
         }
         finally
         {

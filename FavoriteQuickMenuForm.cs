@@ -43,7 +43,7 @@ internal sealed class FavoriteQuickMenuForm : Form
 
     public void UpdateFavorites(IReadOnlyList<FavoriteFolder> favorites)
     {
-        _favorites = favorites.Take(4).ToArray();
+        _favorites = favorites.Take(AppSettings.MaxFloatingFavoriteCount - 1).ToArray();
         if (Visible)
         {
             SyncItems();
@@ -56,6 +56,7 @@ internal sealed class FavoriteQuickMenuForm : Form
     }
 
     internal int ItemCount => _items.Count;
+    internal IReadOnlyList<int> ItemTops => _items.Select(item => item.Top).ToArray();
 
     internal bool TryGetVisibleContentBounds(out Rectangle bounds)
     {

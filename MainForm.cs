@@ -464,7 +464,10 @@ public sealed class MainForm : Form
 
     private void OpenSettings()
     {
-        using var dialog = new SettingsForm(_watchScopes, _excludedPaths);
+        using var dialog = new SettingsForm(
+            _watchScopes,
+            _excludedPaths,
+            _settings.FloatingFavoriteCount);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -475,7 +478,9 @@ public sealed class MainForm : Form
 
         _excludedPaths.Clear();
         _excludedPaths.AddRange(dialog.ExcludedPaths);
+        _settings.FloatingFavoriteCount = dialog.FloatingFavoriteCount;
         SaveSettings();
+        UpdateFloatingFavorites();
 
         ApplyExclusions();
         if (_isMonitoring)
@@ -1100,7 +1105,8 @@ public sealed class MainForm : Form
 
     private void UpdateFloatingFavorites()
     {
-        _floatingForm?.UpdateFavorites(_favorites.OrderedItems.Take(5).ToArray());
+        var count = AppSettings.NormalizeFloatingFavoriteCount(_settings.FloatingFavoriteCount);
+        _floatingForm?.UpdateFavorites(_favorites.OrderedItems.Take(count).ToArray());
     }
 
     private void ApplyExclusions()

@@ -4,13 +4,18 @@ public sealed class SettingsForm : Form
 {
     private readonly CheckedListBox _driveList = new();
     private readonly ListBox _excludeList = new();
+    private readonly NumericUpDown _floatingFavoriteCount = new();
     private readonly List<WatchScope> _watchScopes;
     private readonly List<string> _excludedPaths;
 
-    public SettingsForm(IEnumerable<WatchScope> watchScopes, IEnumerable<string> excludedPaths)
+    public SettingsForm(
+        IEnumerable<WatchScope> watchScopes,
+        IEnumerable<string> excludedPaths,
+        int floatingFavoriteCount)
     {
         _watchScopes = watchScopes.Select(scope => new WatchScope(scope.Path, scope.Enabled)).ToList();
         _excludedPaths = excludedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        _floatingFavoriteCount.Value = AppSettings.NormalizeFloatingFavoriteCount(floatingFavoriteCount);
 
         Text = "监视设置";
         Size = new Size(460, 560);
@@ -28,6 +33,7 @@ public sealed class SettingsForm : Form
 
     public IReadOnlyList<WatchScope> WatchScopes => _watchScopes;
     public IReadOnlyList<string> ExcludedPaths => _excludedPaths;
+    public int FloatingFavoriteCount => (int)_floatingFavoriteCount.Value;
 
     private void BuildUi()
     {
@@ -75,6 +81,15 @@ public sealed class SettingsForm : Form
         };
         tabs.TabPages.Add(excludePage);
         BuildExcludePage(excludePage);
+
+        var floatingPage = new TabPage("浮窗")
+        {
+            BackColor = Theme.Window,
+            ForeColor = Theme.Text,
+            Padding = new Padding(8)
+        };
+        tabs.TabPages.Add(floatingPage);
+        BuildFloatingPage(floatingPage);
 
         var footer = new FlowLayoutPanel
         {
@@ -160,6 +175,52 @@ public sealed class SettingsForm : Form
         var removeButton = CreateButton("移除", primary: false);
         removeButton.Click += (_, _) => RemoveSelectedExclusion();
         buttons.Controls.Add(removeButton);
+    }
+
+    private void BuildFloatingPage(Control page)
+    {
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 92,
+            ColumnCount = 2,
+            RowCount = 2,
+            BackColor = Theme.Window,
+            Padding = new Padding(4, 8, 4, 0)
+        };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+        page.Controls.Add(root);
+
+        root.Controls.Add(new Label
+        {
+            Text = "收藏显示数量",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Text,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 0);
+
+        _floatingFavoriteCount.Dock = DockStyle.Fill;
+        _floatingFavoriteCount.Minimum = AppSettings.MinFloatingFavoriteCount;
+        _floatingFavoriteCount.Maximum = AppSettings.MaxFloatingFavoriteCount;
+        _floatingFavoriteCount.BackColor = Theme.Panel;
+        _floatingFavoriteCount.ForeColor = Theme.Text;
+        _floatingFavoriteCount.BorderStyle = BorderStyle.FixedSingle;
+        _floatingFavoriteCount.TextAlign = HorizontalAlignment.Center;
+        root.Controls.Add(_floatingFavoriteCount, 1, 0);
+
+        var description = new Label
+        {
+            Text = "包含底部固定的最新收藏，展开栏始终从下往上排列。",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true
+        };
+        root.SetColumnSpan(description, 2);
+        root.Controls.Add(description, 0, 1);
     }
 
     private static Button CreateButton(string text, bool primary)

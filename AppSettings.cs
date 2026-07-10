@@ -4,11 +4,21 @@ namespace DiskWriteWatcher;
 
 public sealed class AppSettings
 {
+    public const int DefaultFloatingFavoriteCount = 5;
+    public const int MinFloatingFavoriteCount = 1;
+    public const int MaxFloatingFavoriteCount = 14;
+
     public List<SavedWatchScope> WatchScopes { get; set; } = new();
     public List<string> ExcludedPaths { get; set; } = new();
     public List<SavedFavoriteFolder> FavoriteFolders { get; set; } = new();
     public int? FloatingLeft { get; set; }
     public int? FloatingTop { get; set; }
+    public int FloatingFavoriteCount { get; set; } = DefaultFloatingFavoriteCount;
+
+    public static int NormalizeFloatingFavoriteCount(int value)
+    {
+        return Math.Clamp(value, MinFloatingFavoriteCount, MaxFloatingFavoriteCount);
+    }
 
     public static AppSettings Load()
     {

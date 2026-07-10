@@ -53,6 +53,8 @@ public sealed class FloatingFolderForm : Form
     private string? _contextTargetPath;
     private bool _contextTargetIsFavorite;
 
+    internal int FavoriteCount => _favorites.Count;
+
     public FloatingFolderForm(
         Action openLatestFolder,
         Action<string> openFavoriteFolder,
@@ -159,7 +161,7 @@ public sealed class FloatingFolderForm : Form
 
     public void UpdateFavorites(IReadOnlyList<FavoriteFolder> favorites)
     {
-        _favorites = favorites.Take(5).ToArray();
+        _favorites = favorites.Take(AppSettings.MaxFloatingFavoriteCount).ToArray();
         var first = _favorites.FirstOrDefault();
         _favoriteName.Text = first?.DisplayName ?? "暂无收藏";
         _favoriteDot.Active = first is not null;
@@ -169,7 +171,7 @@ public sealed class FloatingFolderForm : Form
             ? "暂无收藏文件夹"
             : $"{first.DisplayName}\r\n{first.Path}";
         SetTip(_favoriteSegment, tip);
-        _quickMenu.UpdateFavorites(_favorites.Skip(1).Take(4).ToArray());
+        _quickMenu.UpdateFavorites(_favorites.Skip(1).ToArray());
 
         if (_quickMenu.Visible)
         {
@@ -612,19 +614,11 @@ public sealed class FloatingFolderForm : Form
             var nativeArea = Screen.FromRectangle(anchorBounds).WorkingArea;
             var contentX = anchorBounds.Right - contentBounds.Width;
             var contentY = anchorBounds.Top - contentBounds.Height - gap;
-            if (contentY < nativeArea.Top)
-            {
-                contentY = Math.Min(nativeArea.Bottom - contentBounds.Height, anchorBounds.Bottom + gap);
-            }
 
             contentX = Math.Clamp(
                 contentX,
                 nativeArea.Left,
                 Math.Max(nativeArea.Left, nativeArea.Right - contentBounds.Width));
-            contentY = Math.Clamp(
-                contentY,
-                nativeArea.Top,
-                Math.Max(nativeArea.Top, nativeArea.Bottom - contentBounds.Height));
             var formX = menuBounds.Left + contentX - contentBounds.Left;
             var formY = menuBounds.Top + contentY - contentBounds.Top;
             _ = SetWindowPos(
@@ -640,13 +634,7 @@ public sealed class FloatingFolderForm : Form
 
         var desired = new Point(Right - _quickMenu.Width, Top - _quickMenu.Height - 6);
         var area = Screen.FromControl(this).WorkingArea;
-        if (desired.Y < area.Top)
-        {
-            desired.Y = Math.Min(area.Bottom - _quickMenu.Height, Bottom + 6);
-        }
-
         desired.X = Math.Clamp(desired.X, area.Left, Math.Max(area.Left, area.Right - _quickMenu.Width));
-        desired.Y = Math.Clamp(desired.Y, area.Top, Math.Max(area.Top, area.Bottom - _quickMenu.Height));
         _quickMenu.Location = desired;
     }
 
