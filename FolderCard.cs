@@ -64,6 +64,8 @@ public sealed class FolderCard : UserControl
     }
 
     public string FolderPath => _folder.FolderPath;
+    internal Rectangle FilePanelBounds => _filePanel.Bounds;
+    internal int VisibleFileRowCount => _fileRows.Count(row => row.HasRecord);
 
     public void UpdateActivity(FolderActivity folder, bool expanded, bool isLatest, int width)
     {
@@ -189,7 +191,7 @@ public sealed class FolderCard : UserControl
 
     private void BuildFileRows()
     {
-        _filePanel.Dock = DockStyle.Fill;
+        _filePanel.Dock = DockStyle.None;
         _filePanel.BackColor = Theme.CardAlt;
         _filePanel.Padding = new Padding(72, 5, 10, 8);
         Controls.Add(_filePanel);
@@ -220,6 +222,7 @@ public sealed class FolderCard : UserControl
 
     private void UpdateLayout(int width)
     {
+        _filePanel.SetBounds(0, _headerRow.Height, width, Math.Max(0, Height - _headerRow.Height));
         var textWidth = Math.Max(120, width - 198);
         _nameLabel.Width = textWidth;
         _pathLabel.Width = textWidth;
@@ -326,6 +329,7 @@ public sealed class FolderCard : UserControl
         }
 
         public Panel Panel { get; }
+        public bool HasRecord => _record is not null;
 
         public int Top
         {

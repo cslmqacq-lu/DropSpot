@@ -312,6 +312,14 @@ public static class SmokeTest
                 cards.Add(card);
             }
 
+            if (cards.Any(card =>
+                    card.VisibleFileRowCount != 1
+                    || card.FilePanelBounds.Top != 88
+                    || card.FilePanelBounds.Bottom > card.ClientSize.Height))
+            {
+                return 42;
+            }
+
             floating = new FloatingFolderForm(
                 () => { },
                 _ => { },
