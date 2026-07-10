@@ -592,7 +592,7 @@ public sealed class MainForm : Form
 
     private void RenderFolders()
     {
-        if (_folderList.IsDisposed)
+        if (_floatingModeActive || _folderList.IsDisposed)
         {
             return;
         }
@@ -656,6 +656,11 @@ public sealed class MainForm : Form
 
     private void RefreshCardTimes()
     {
+        if (_floatingModeActive)
+        {
+            return;
+        }
+
         if (_showFavorites)
         {
             foreach (var card in _favoriteCards.Values)
@@ -685,7 +690,7 @@ public sealed class MainForm : Form
 
     private void RenderFavorites()
     {
-        if (!_showFavorites || _favoriteList.IsDisposed)
+        if (_floatingModeActive || !_showFavorites || _favoriteList.IsDisposed)
         {
             return;
         }
@@ -957,8 +962,21 @@ public sealed class MainForm : Form
             Bounds = ClampWindowBounds(restoreBounds);
         }
 
+        RenderCurrentMainView();
         BringToFront();
         Activate();
+    }
+
+    private void RenderCurrentMainView()
+    {
+        if (_showFavorites)
+        {
+            RenderFavorites();
+        }
+        else
+        {
+            RenderFolders();
+        }
     }
 
     private void CaptureMainWindowPlacement()
