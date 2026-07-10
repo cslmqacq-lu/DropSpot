@@ -5,17 +5,24 @@ public sealed class SettingsForm : Form
     private readonly CheckedListBox _driveList = new();
     private readonly ListBox _excludeList = new();
     private readonly NumericUpDown _floatingFavoriteCount = new();
+    private readonly NumericUpDown _floatingOpacity = new();
+    private readonly Button _floatingColorButton = new();
     private readonly List<WatchScope> _watchScopes;
     private readonly List<string> _excludedPaths;
+    private Color _floatingBackgroundColor;
 
     public SettingsForm(
         IEnumerable<WatchScope> watchScopes,
         IEnumerable<string> excludedPaths,
-        int floatingFavoriteCount)
+        int floatingFavoriteCount,
+        int floatingBackgroundArgb,
+        int floatingOpacityPercent)
     {
         _watchScopes = watchScopes.Select(scope => new WatchScope(scope.Path, scope.Enabled)).ToList();
         _excludedPaths = excludedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         _floatingFavoriteCount.Value = AppSettings.NormalizeFloatingFavoriteCount(floatingFavoriteCount);
+        _floatingBackgroundColor = AppSettings.GetFloatingBackgroundColor(floatingBackgroundArgb);
+        _floatingOpacity.Value = AppSettings.NormalizeFloatingOpacityPercent(floatingOpacityPercent);
 
         Text = "监视设置";
         Size = new Size(460, 560);
@@ -34,6 +41,8 @@ public sealed class SettingsForm : Form
     public IReadOnlyList<WatchScope> WatchScopes => _watchScopes;
     public IReadOnlyList<string> ExcludedPaths => _excludedPaths;
     public int FloatingFavoriteCount => (int)_floatingFavoriteCount.Value;
+    public int FloatingBackgroundArgb => _floatingBackgroundColor.ToArgb();
+    public int FloatingOpacityPercent => (int)_floatingOpacity.Value;
 
     private void BuildUi()
     {
@@ -51,7 +60,7 @@ public sealed class SettingsForm : Form
 
         root.Controls.Add(new Label
         {
-            Text = "监视硬盘和排除文件夹",
+            Text = "监视与外观设置",
             Dock = DockStyle.Fill,
             ForeColor = Theme.Text,
             Font = new Font("Microsoft YaHei UI", 11F, FontStyle.Bold),
@@ -90,6 +99,15 @@ public sealed class SettingsForm : Form
         };
         tabs.TabPages.Add(floatingPage);
         BuildFloatingPage(floatingPage);
+
+        var aboutPage = new TabPage("关于")
+        {
+            BackColor = Theme.Window,
+            ForeColor = Theme.Text,
+            Padding = new Padding(8)
+        };
+        tabs.TabPages.Add(aboutPage);
+        BuildAboutPage(aboutPage);
 
         var footer = new FlowLayoutPanel
         {
@@ -182,14 +200,17 @@ public sealed class SettingsForm : Form
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 92,
+            Height = 206,
             ColumnCount = 2,
-            RowCount = 2,
+            RowCount = 5,
             BackColor = Theme.Window,
             Padding = new Padding(4, 8, 4, 0)
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
         page.Controls.Add(root);
@@ -211,16 +232,136 @@ public sealed class SettingsForm : Form
         _floatingFavoriteCount.TextAlign = HorizontalAlignment.Center;
         root.Controls.Add(_floatingFavoriteCount, 1, 0);
 
+        root.Controls.Add(new Label
+        {
+            Text = "背景色",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Text,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 1);
+
+        _floatingColorButton.Dock = DockStyle.Fill;
+        _floatingColorButton.Margin = new Padding(0, 5, 0, 5);
+        _floatingColorButton.FlatStyle = FlatStyle.Flat;
+        _floatingColorButton.Click += (_, _) => ChooseFloatingColor();
+        root.Controls.Add(_floatingColorButton, 1, 1);
+        UpdateFloatingColorButton();
+
+        root.Controls.Add(new Label
+        {
+            Text = "背景不透明度",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Text,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 2);
+
+        _floatingOpacity.Dock = DockStyle.Fill;
+        _floatingOpacity.Minimum = AppSettings.MinFloatingOpacityPercent;
+        _floatingOpacity.Maximum = AppSettings.MaxFloatingOpacityPercent;
+        _floatingOpacity.Increment = 5;
+        _floatingOpacity.BackColor = Theme.Panel;
+        _floatingOpacity.ForeColor = Theme.Text;
+        _floatingOpacity.BorderStyle = BorderStyle.FixedSingle;
+        _floatingOpacity.TextAlign = HorizontalAlignment.Center;
+        root.Controls.Add(_floatingOpacity, 1, 2);
+
+        root.Controls.Add(new Label
+        {
+            Text = "恢复默认外观",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Text,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 3);
+
+        var resetButton = CreateButton("默认", primary: false);
+        resetButton.Dock = DockStyle.Fill;
+        resetButton.Margin = new Padding(0, 5, 0, 5);
+        resetButton.Click += (_, _) => RestoreDefaultFloatingAppearance();
+        root.Controls.Add(resetButton, 1, 3);
+
         var description = new Label
         {
-            Text = "包含底部固定的最新收藏，展开栏始终从下往上排列。",
+            Text = "收藏从下往上排列；颜色和不透明度统一用于浮窗、展开栏和信息框。",
             Dock = DockStyle.Fill,
             ForeColor = Theme.Muted,
             TextAlign = ContentAlignment.MiddleLeft,
             AutoEllipsis = true
         };
         root.SetColumnSpan(description, 2);
-        root.Controls.Add(description, 0, 1);
+        root.Controls.Add(description, 0, 4);
+    }
+
+    private static void BuildAboutPage(Control page)
+    {
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 150,
+            ColumnCount = 1,
+            RowCount = 3,
+            BackColor = Theme.Window,
+            Padding = new Padding(8, 22, 8, 0)
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 32F));
+        page.Controls.Add(root);
+
+        root.Controls.Add(new Label
+        {
+            Text = "活跃文件夹",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Text,
+            Font = new Font("Microsoft YaHei UI", 14F, FontStyle.Bold),
+            TextAlign = ContentAlignment.MiddleCenter
+        }, 0, 0);
+        root.Controls.Add(new Label
+        {
+            Text = $"版本：{Application.ProductVersion}",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.MiddleCenter
+        }, 0, 1);
+        root.Controls.Add(new Label
+        {
+            Text = "开发者：cslm",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.MiddleCenter
+        }, 0, 2);
+    }
+
+    private void ChooseFloatingColor()
+    {
+        using var dialog = new ColorDialog
+        {
+            Color = _floatingBackgroundColor,
+            AllowFullOpen = true,
+            AnyColor = true,
+            FullOpen = true
+        };
+
+        if (dialog.ShowDialog(this) == DialogResult.OK)
+        {
+            _floatingBackgroundColor = AppSettings.GetFloatingBackgroundColor(dialog.Color.ToArgb());
+            UpdateFloatingColorButton();
+        }
+    }
+
+    private void RestoreDefaultFloatingAppearance()
+    {
+        _floatingBackgroundColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
+        _floatingOpacity.Value = AppSettings.DefaultFloatingOpacityPercent;
+        UpdateFloatingColorButton();
+    }
+
+    private void UpdateFloatingColorButton()
+    {
+        _floatingColorButton.Text = $"#{_floatingBackgroundColor.R:X2}{_floatingBackgroundColor.G:X2}{_floatingBackgroundColor.B:X2}";
+        _floatingColorButton.BackColor = _floatingBackgroundColor;
+        _floatingColorButton.ForeColor = Theme.TextForBackground(_floatingBackgroundColor);
+        _floatingColorButton.FlatAppearance.BorderColor = Theme.BorderForBackground(_floatingBackgroundColor);
+        _floatingColorButton.FlatAppearance.BorderSize = 1;
     }
 
     private static Button CreateButton(string text, bool primary)

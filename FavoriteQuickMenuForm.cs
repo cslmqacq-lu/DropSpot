@@ -13,6 +13,8 @@ internal sealed class FavoriteQuickMenuForm : Form
     private readonly ContextMenuStrip _contextMenu;
     private readonly List<FavoriteQuickItem> _items = new();
     private IReadOnlyList<FavoriteFolder> _favorites = Array.Empty<FavoriteFolder>();
+    private Color _backgroundColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
+    private int _opacityPercent = AppSettings.DefaultFloatingOpacityPercent;
 
     public FavoriteQuickMenuForm(
         Action<FavoriteFolder> openFavorite,
@@ -36,7 +38,7 @@ internal sealed class FavoriteQuickMenuForm : Form
         StartPosition = FormStartPosition.Manual;
         BackColor = Color.Magenta;
         TransparencyKey = Color.Magenta;
-        Opacity = 0.70;
+        Opacity = _opacityPercent / 100D;
         Width = ItemWidth;
         Deactivate += (_, _) => _scheduleCollapse();
     }
@@ -55,8 +57,23 @@ internal sealed class FavoriteQuickMenuForm : Form
         SyncItems();
     }
 
+    public void ApplyAppearance(Color backgroundColor, int opacityPercent)
+    {
+        _backgroundColor = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
+        _opacityPercent = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent);
+        Opacity = _opacityPercent / 100D;
+        foreach (var item in _items)
+        {
+            item.ApplyAppearance(_backgroundColor);
+        }
+
+        Invalidate(invalidateChildren: true);
+    }
+
     internal int ItemCount => _items.Count;
     internal IReadOnlyList<int> ItemTops => _items.Select(item => item.Top).ToArray();
+    internal Color AppearanceBackgroundColor => _backgroundColor;
+    internal int AppearanceOpacityPercent => _opacityPercent;
 
     internal bool TryGetVisibleContentBounds(out Rectangle bounds)
     {
@@ -101,6 +118,7 @@ internal sealed class FavoriteQuickMenuForm : Form
                     _hideInfo,
                     _prepareContextMenu,
                     _contextMenu);
+                item.ApplyAppearance(_backgroundColor);
                 _items.Add(item);
                 Controls.Add(item);
             }
@@ -151,7 +169,7 @@ internal sealed class FavoriteQuickMenuForm : Form
             _hideInfo = hideInfo;
 
             Size = new Size(ItemWidth, ItemHeight);
-            BackColor = Color.FromArgb(8, 12, 18);
+            BackColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
             DoubleBuffered = true;
             Cursor = Cursors.Hand;
 
@@ -200,6 +218,14 @@ internal sealed class FavoriteQuickMenuForm : Form
         }
 
         public string FolderPath => _favorite.Path;
+
+        public void ApplyAppearance(Color backgroundColor)
+        {
+            BackColor = backgroundColor;
+            _name.ForeColor = Theme.TextForBackground(backgroundColor);
+            _rank.ForeColor = Theme.MutedTextForBackground(backgroundColor);
+            Invalidate(invalidateChildren: true);
+        }
 
         public void UpdateFavorite(FavoriteFolder favorite, int rank)
         {
@@ -263,11 +289,11 @@ internal sealed class FavoriteInfoPopupForm : Form
         Size = new Size(PopupWidth, PopupHeight);
         BackColor = Color.Fuchsia;
         TransparencyKey = Color.Fuchsia;
-        Opacity = 0.70;
+        Opacity = AppSettings.DefaultFloatingOpacityPercent / 100D;
         DoubleBuffered = true;
 
         _surface.Bounds = ClientRectangle;
-        _surface.BackColor = Color.FromArgb(39, 52, 67);
+        _surface.BackColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
         _surface.Region = FloatingFolderForm.CreateNativeRoundedRegion(_surface.ClientSize, 9);
         Controls.Add(_surface);
 
@@ -290,6 +316,20 @@ internal sealed class FavoriteInfoPopupForm : Form
         SizeChanged += (_, _) => UpdateRoundedSurface();
         LayoutLabels();
     }
+
+    public void ApplyAppearance(Color backgroundColor, int opacityPercent)
+    {
+        var color = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
+        Opacity = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent) / 100D;
+        _surface.BackColor = color;
+        _name.ForeColor = Theme.TextForBackground(color);
+        _path.ForeColor = Theme.MutedTextForBackground(color);
+        _time.ForeColor = Theme.HighlightTextForBackground(color);
+        _surface.Invalidate(invalidateChildren: true);
+    }
+
+    internal Color SurfaceColor => _surface.BackColor;
+    internal int AppearanceOpacityPercent => (int)Math.Round(Opacity * 100D);
 
     protected override bool ShowWithoutActivation => true;
 

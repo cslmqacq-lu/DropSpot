@@ -6,8 +6,6 @@ namespace DiskWriteWatcher;
 public sealed class FloatingFolderForm : Form
 {
     private const int CornerRadius = 12;
-    private const double FloatingOpacity = 0.70;
-    private static readonly Color SurfaceColor = Color.FromArgb(8, 12, 18);
     private static readonly Color TransparentColor = Color.Fuchsia;
     private readonly Action _openLatestFolder;
     private readonly Action<string> _openFavoriteFolder;
@@ -42,6 +40,10 @@ public sealed class FloatingFolderForm : Form
     private readonly FavoriteQuickMenuForm _quickMenu;
     private readonly FavoriteInfoPopupForm _infoPopup = new();
     private IReadOnlyList<FavoriteFolder> _favorites = Array.Empty<FavoriteFolder>();
+    private Color _surfaceColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
+    private Color _hoverColor = Theme.HoverForBackground(AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb));
+    private Color _dividerColor = Theme.BorderForBackground(AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb));
+    private double _floatingOpacity = AppSettings.DefaultFloatingOpacityPercent / 100D;
     private Point _dragStart;
     private Point _windowStart;
     private Control? _dragCaptureControl;
@@ -84,7 +86,7 @@ public sealed class FloatingFolderForm : Form
         Size = new Size(208, 86);
         BackColor = TransparentColor;
         TransparencyKey = TransparentColor;
-        Opacity = FloatingOpacity;
+        Opacity = _floatingOpacity;
         DoubleBuffered = true;
 
         BuildUi();
@@ -96,6 +98,7 @@ public sealed class FloatingFolderForm : Form
             ScheduleAutoCollapse,
             PrepareFavoriteContext,
             _menu);
+        ApplyAppearance(_surfaceColor, AppSettings.DefaultFloatingOpacityPercent);
 
         _favoriteClickTimer.Interval = Math.Max(200, SystemInformation.DoubleClickTime);
         _favoriteClickTimer.Tick += (_, _) =>
@@ -186,6 +189,30 @@ public sealed class FloatingFolderForm : Form
         }
     }
 
+    public void ApplyAppearance(Color backgroundColor, int opacityPercent)
+    {
+        _surfaceColor = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
+        _hoverColor = Theme.HoverForBackground(_surfaceColor);
+        _dividerColor = Theme.BorderForBackground(_surfaceColor);
+        _floatingOpacity = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent) / 100D;
+
+        Opacity = _floatingOpacity;
+        _surface.BackColor = _surfaceColor;
+        _activeSegment.BackColor = _surfaceColor;
+        _favoriteSegment.BackColor = _surfaceColor;
+        var textColor = Theme.TextForBackground(_surfaceColor);
+        var mutedColor = Theme.MutedTextForBackground(_surfaceColor);
+        _activeName.ForeColor = textColor;
+        _favoriteName.ForeColor = textColor;
+        _chevron.ForeColor = mutedColor;
+        _quickMenu.ApplyAppearance(_surfaceColor, opacityPercent);
+        _infoPopup.ApplyAppearance(_surfaceColor, opacityPercent);
+        _surface.Invalidate();
+    }
+
+    internal Color SurfaceColor => _surfaceColor;
+    internal int AppearanceOpacityPercent => (int)Math.Round(_floatingOpacity * 100D);
+
     public void ShowAt(Point? savedLocation)
     {
         Location = FloatingWindowPlacement.Resolve(savedLocation, Size);
@@ -222,7 +249,7 @@ public sealed class FloatingFolderForm : Form
             e.Graphics.DrawPath(border, path);
         }
 
-        using var divider = new Pen(Theme.Border);
+        using var divider = new Pen(_dividerColor);
         e.Graphics.DrawLine(divider, _surface.Width / 2, 8, _surface.Width / 2, _surface.Height - 8);
     }
 
@@ -247,7 +274,7 @@ public sealed class FloatingFolderForm : Form
     private void BuildUi()
     {
         _surface.Bounds = ClientRectangle;
-        _surface.BackColor = SurfaceColor;
+        _surface.BackColor = _surfaceColor;
         _surface.Paint += PaintSurface;
         Controls.Add(_surface);
 
@@ -342,10 +369,10 @@ public sealed class FloatingFolderForm : Form
     private void ConfigureSegment(Panel panel, Rectangle bounds)
     {
         panel.Bounds = bounds;
-        panel.BackColor = SurfaceColor;
+        panel.BackColor = _surfaceColor;
         panel.Cursor = Cursors.Hand;
-        panel.MouseEnter += (_, _) => panel.BackColor = Theme.Panel;
-        panel.MouseLeave += (_, _) => panel.BackColor = SurfaceColor;
+        panel.MouseEnter += (_, _) => panel.BackColor = _hoverColor;
+        panel.MouseLeave += (_, _) => panel.BackColor = _surfaceColor;
     }
 
     private void ConfigureFolderIcon(PictureBox icon, Point location)
@@ -598,7 +625,7 @@ public sealed class FloatingFolderForm : Form
             if (_quickMenu.Visible)
             {
                 PositionFavoriteMenu();
-                _quickMenu.Opacity = FloatingOpacity;
+                _quickMenu.Opacity = _floatingOpacity;
             }
         });
     }

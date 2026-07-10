@@ -7,6 +7,10 @@ public sealed class AppSettings
     public const int DefaultFloatingFavoriteCount = 5;
     public const int MinFloatingFavoriteCount = 1;
     public const int MaxFloatingFavoriteCount = 14;
+    public const int DefaultFloatingBackgroundArgb = unchecked((int)0xFF080C12);
+    public const int DefaultFloatingOpacityPercent = 70;
+    public const int MinFloatingOpacityPercent = 20;
+    public const int MaxFloatingOpacityPercent = 100;
 
     public List<SavedWatchScope> WatchScopes { get; set; } = new();
     public List<string> ExcludedPaths { get; set; } = new();
@@ -14,10 +18,26 @@ public sealed class AppSettings
     public int? FloatingLeft { get; set; }
     public int? FloatingTop { get; set; }
     public int FloatingFavoriteCount { get; set; } = DefaultFloatingFavoriteCount;
+    public int FloatingBackgroundArgb { get; set; } = DefaultFloatingBackgroundArgb;
+    public int FloatingOpacityPercent { get; set; } = DefaultFloatingOpacityPercent;
 
     public static int NormalizeFloatingFavoriteCount(int value)
     {
         return Math.Clamp(value, MinFloatingFavoriteCount, MaxFloatingFavoriteCount);
+    }
+
+    public static int NormalizeFloatingOpacityPercent(int value)
+    {
+        return Math.Clamp(value, MinFloatingOpacityPercent, MaxFloatingOpacityPercent);
+    }
+
+    public static Color GetFloatingBackgroundColor(int argb)
+    {
+        var source = Color.FromArgb(argb);
+        var color = Color.FromArgb(255, source.R, source.G, source.B);
+        return color.ToArgb() == Color.Fuchsia.ToArgb()
+            ? Color.FromArgb(254, 0, 255)
+            : color;
     }
 
     public static AppSettings Load()

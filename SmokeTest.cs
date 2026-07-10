@@ -188,7 +188,9 @@ public static class SmokeTest
             },
             FloatingLeft = 123,
             FloatingTop = 456,
-            FloatingFavoriteCount = 8
+            FloatingFavoriteCount = 8,
+            FloatingBackgroundArgb = Color.FromArgb(32, 64, 96).ToArgb(),
+            FloatingOpacityPercent = 55
         };
         original.SaveTo(settingsPath);
 
@@ -211,8 +213,13 @@ public static class SmokeTest
             || recovered.FloatingLeft != 123
             || recovered.FloatingTop != 456
             || recovered.FloatingFavoriteCount != 8
+            || recovered.FloatingBackgroundArgb != Color.FromArgb(32, 64, 96).ToArgb()
+            || recovered.FloatingOpacityPercent != 55
             || AppSettings.NormalizeFloatingFavoriteCount(0) != 1
-            || AppSettings.NormalizeFloatingFavoriteCount(99) != 14)
+            || AppSettings.NormalizeFloatingFavoriteCount(99) != 14
+            || AppSettings.NormalizeFloatingOpacityPercent(0) != 20
+            || AppSettings.NormalizeFloatingOpacityPercent(120) != 100
+            || AppSettings.GetFloatingBackgroundColor(Color.Fuchsia.ToArgb()).ToArgb() == Color.Fuchsia.ToArgb())
         {
             return 30;
         }
@@ -281,6 +288,7 @@ public static class SmokeTest
         FloatingFolderForm? floating = null;
         FavoriteQuickMenuForm? quickMenu = null;
         FavoriteInfoPopupForm? infoPopup = null;
+        SettingsForm? settingsForm = null;
         ContextMenuStrip? contextMenu = null;
         try
         {
@@ -315,6 +323,8 @@ public static class SmokeTest
                 _ => { },
                 () => true);
             floating.CreateControl();
+            var appearanceColor = Color.FromArgb(230, 235, 240);
+            floating.ApplyAppearance(appearanceColor, 20);
             floating.UpdateFavorites(Enumerable.Range(0, 14)
                 .Select(index => new FavoriteFolder(
                     $@"C:\favorites\folder-{index}",
@@ -337,12 +347,21 @@ public static class SmokeTest
                     DateTime.Now))
                 .ToArray();
             quickMenu.UpdateFavorites(visibleFavorites);
+            quickMenu.ApplyAppearance(appearanceColor, 20);
             quickMenu.PrepareForShow();
             quickMenu.Location = Screen.PrimaryScreen?.WorkingArea.Location ?? Point.Empty;
             quickMenu.Show();
 
             infoPopup = new FavoriteInfoPopupForm();
+            infoPopup.ApplyAppearance(appearanceColor, 20);
             infoPopup.ShowFor(visibleFavorites[0], new Rectangle(quickMenu.Right, quickMenu.Bottom - 70, 101, 70));
+            settingsForm = new SettingsForm(
+                Array.Empty<WatchScope>(),
+                Array.Empty<string>(),
+                floatingFavoriteCount: 8,
+                floatingBackgroundArgb: appearanceColor.ToArgb(),
+                floatingOpacityPercent: 20);
+            settingsForm.CreateControl();
             quickMenu.Refresh();
             infoPopup.Refresh();
             var itemTops = quickMenu.ItemTops;
@@ -351,10 +370,21 @@ public static class SmokeTest
                 .All(isOrdered => isOrdered);
             if (!quickMenu.Visible
                 || floating.FavoriteCount != 14
+                || floating.SurfaceColor.ToArgb() != appearanceColor.ToArgb()
+                || floating.AppearanceOpacityPercent != 20
                 || quickMenu.ItemCount != 13
+                || quickMenu.AppearanceBackgroundColor.ToArgb() != appearanceColor.ToArgb()
+                || quickMenu.AppearanceOpacityPercent != 20
                 || itemTops.Count != 13
                 || !orderedBottomUp
-                || !infoPopup.Visible)
+                || !infoPopup.Visible
+                || infoPopup.SurfaceColor.ToArgb() != appearanceColor.ToArgb()
+                || infoPopup.AppearanceOpacityPercent != 20
+                || settingsForm.FloatingFavoriteCount != 8
+                || settingsForm.FloatingBackgroundArgb != appearanceColor.ToArgb()
+                || settingsForm.FloatingOpacityPercent != 20
+                || !ContainsControlText(settingsForm, $"版本：{Application.ProductVersion}")
+                || !ContainsControlText(settingsForm, "开发者：cslm"))
             {
                 return 41;
             }
@@ -437,6 +467,7 @@ public static class SmokeTest
 
             floating?.Dispose();
             infoPopup?.Dispose();
+            settingsForm?.Dispose();
             quickMenu?.Dispose();
             contextMenu?.Dispose();
             foreach (var card in favoriteCards)
@@ -446,6 +477,12 @@ public static class SmokeTest
 
             ShellIconProvider.DisposeCache();
         }
+    }
+
+    private static bool ContainsControlText(Control root, string text)
+    {
+        return string.Equals(root.Text, text, StringComparison.Ordinal)
+            || root.Controls.Cast<Control>().Any(child => ContainsControlText(child, text));
     }
 
     private static ChangeRecord CreateRecord(string filePath, DateTime time)

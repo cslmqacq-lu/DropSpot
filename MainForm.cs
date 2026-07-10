@@ -412,6 +412,7 @@ public sealed class MainForm : Form
 
         _favorites.Load(_settings.FavoriteFolders);
         UpdateFavoriteTabText();
+        ApplyFloatingAppearance();
         UpdateFloatingFavorites();
     }
 
@@ -467,7 +468,9 @@ public sealed class MainForm : Form
         using var dialog = new SettingsForm(
             _watchScopes,
             _excludedPaths,
-            _settings.FloatingFavoriteCount);
+            _settings.FloatingFavoriteCount,
+            _settings.FloatingBackgroundArgb,
+            _settings.FloatingOpacityPercent);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -479,7 +482,10 @@ public sealed class MainForm : Form
         _excludedPaths.Clear();
         _excludedPaths.AddRange(dialog.ExcludedPaths);
         _settings.FloatingFavoriteCount = dialog.FloatingFavoriteCount;
+        _settings.FloatingBackgroundArgb = dialog.FloatingBackgroundArgb;
+        _settings.FloatingOpacityPercent = dialog.FloatingOpacityPercent;
         SaveSettings();
+        ApplyFloatingAppearance();
         UpdateFloatingFavorites();
 
         ApplyExclusions();
@@ -1107,6 +1113,13 @@ public sealed class MainForm : Form
     {
         var count = AppSettings.NormalizeFloatingFavoriteCount(_settings.FloatingFavoriteCount);
         _floatingForm?.UpdateFavorites(_favorites.OrderedItems.Take(count).ToArray());
+    }
+
+    private void ApplyFloatingAppearance()
+    {
+        var color = AppSettings.GetFloatingBackgroundColor(_settings.FloatingBackgroundArgb);
+        var opacity = AppSettings.NormalizeFloatingOpacityPercent(_settings.FloatingOpacityPercent);
+        _floatingForm?.ApplyAppearance(color, opacity);
     }
 
     private void ApplyExclusions()
