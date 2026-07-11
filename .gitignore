@@ -5,3 +5,5 @@ obj/
 *.suo
 *.userprefs
 .vs/
+artifacts/
+dist/
