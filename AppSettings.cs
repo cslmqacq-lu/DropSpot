@@ -20,6 +20,7 @@ public sealed class AppSettings
     public int FloatingFavoriteCount { get; set; } = DefaultFloatingFavoriteCount;
     public int FloatingBackgroundArgb { get; set; } = DefaultFloatingBackgroundArgb;
     public int FloatingOpacityPercent { get; set; } = DefaultFloatingOpacityPercent;
+    public bool StartWithWindows { get; set; }
 
     public static int NormalizeFloatingFavoriteCount(int value)
     {

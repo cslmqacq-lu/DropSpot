@@ -5,6 +5,7 @@ DropSpot v{VERSION}
 1. 双击 DropSpot.exe 启动，无需安装 .NET 运行时。
 2. 在“设置”中选择需要监视的 NTFS/ReFS 硬盘。
 3. 最小化主窗口后，可通过浮窗快速打开最新活跃文件夹和收藏夹。
+4. 可在“设置 → 常规”中启用随 Windows 启动；登录后会自动进入浮窗。
 
 用户设置
 设置与收藏保存在：%AppData%\DropSpot

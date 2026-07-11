@@ -19,6 +19,23 @@ static class Program
             return;
         }
 
-        Application.Run(new MainForm());
-    }    
+        using var instance = new SingleInstanceCoordinator();
+        if (!instance.IsFirstInstance)
+        {
+            instance.SignalActivation();
+            return;
+        }
+
+        var startMinimized = args.Any(arg =>
+            string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
+        using var mainForm = new MainForm(startMinimized);
+        instance.StartListening(() =>
+        {
+            if (!mainForm.IsDisposed && mainForm.IsHandleCreated)
+            {
+                mainForm.BeginInvoke(mainForm.ActivateFromExternalRequest);
+            }
+        });
+        Application.Run(mainForm);
+    }
 }

@@ -13,6 +13,7 @@
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <AssemblyName>DropSpot</AssemblyName>
     <RootNamespace>DropSpot</RootNamespace>
+    <ApplicationIcon>assets\DropSpot.ico</ApplicationIcon>
     <Authors>cslm</Authors>
     <Company>cslm</Company>
     <Product>DropSpot</Product>

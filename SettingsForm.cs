@@ -7,6 +7,7 @@ public sealed class SettingsForm : Form
     private readonly NumericUpDown _floatingFavoriteCount = new();
     private readonly NumericUpDown _floatingOpacity = new();
     private readonly Button _floatingColorButton = new();
+    private readonly CheckBox _startWithWindows = new();
     private readonly List<WatchScope> _watchScopes;
     private readonly List<string> _excludedPaths;
     private Color _floatingBackgroundColor;
@@ -16,13 +17,15 @@ public sealed class SettingsForm : Form
         IEnumerable<string> excludedPaths,
         int floatingFavoriteCount,
         int floatingBackgroundArgb,
-        int floatingOpacityPercent)
+        int floatingOpacityPercent,
+        bool startWithWindows)
     {
         _watchScopes = watchScopes.Select(scope => new WatchScope(scope.Path, scope.Enabled)).ToList();
         _excludedPaths = excludedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         _floatingFavoriteCount.Value = AppSettings.NormalizeFloatingFavoriteCount(floatingFavoriteCount);
         _floatingBackgroundColor = AppSettings.GetFloatingBackgroundColor(floatingBackgroundArgb);
         _floatingOpacity.Value = AppSettings.NormalizeFloatingOpacityPercent(floatingOpacityPercent);
+        _startWithWindows.Checked = startWithWindows;
 
         Text = "监视设置";
         Size = new Size(460, 560);
@@ -43,6 +46,7 @@ public sealed class SettingsForm : Form
     public int FloatingFavoriteCount => (int)_floatingFavoriteCount.Value;
     public int FloatingBackgroundArgb => _floatingBackgroundColor.ToArgb();
     public int FloatingOpacityPercent => (int)_floatingOpacity.Value;
+    public bool StartWithWindows => _startWithWindows.Checked;
 
     private void BuildUi()
     {
@@ -72,6 +76,15 @@ public sealed class SettingsForm : Form
             Dock = DockStyle.Fill
         };
         root.Controls.Add(tabs, 0, 1);
+
+        var generalPage = new TabPage("常规")
+        {
+            BackColor = Theme.Window,
+            ForeColor = Theme.Text,
+            Padding = new Padding(8)
+        };
+        tabs.TabPages.Add(generalPage);
+        BuildGeneralPage(generalPage);
 
         var drivePage = new TabPage("监视硬盘")
         {
@@ -129,6 +142,37 @@ public sealed class SettingsForm : Form
 
         AcceptButton = okButton;
         CancelButton = cancelButton;
+    }
+
+    private void BuildGeneralPage(Control page)
+    {
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 82,
+            RowCount = 2,
+            ColumnCount = 1,
+            Padding = new Padding(8, 12, 8, 0),
+            BackColor = Theme.Window
+        };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+        page.Controls.Add(root);
+
+        _startWithWindows.Text = "随 Windows 启动";
+        _startWithWindows.Dock = DockStyle.Fill;
+        _startWithWindows.ForeColor = Theme.Text;
+        _startWithWindows.BackColor = Theme.Window;
+        _startWithWindows.AutoSize = false;
+        root.Controls.Add(_startWithWindows, 0, 0);
+
+        root.Controls.Add(new Label
+        {
+            Text = "登录后自动开始监视，并进入浮窗。",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 1);
     }
 
     private void BuildDrivePage(Control page)

@@ -40,6 +40,13 @@ public static class SmokeTest
                 return bufferResult;
             }
 
+            Console.WriteLine("[smoke] single-instance");
+            var singleInstanceResult = RunSingleInstanceTests();
+            if (singleInstanceResult != 0)
+            {
+                return singleInstanceResult;
+            }
+
             Console.WriteLine("[smoke] placement");
             var placementResult = RunPlacementTests();
             if (placementResult != 0)
@@ -138,6 +145,28 @@ public static class SmokeTest
         return WaitForRecord(records, restartedFile, minimumCount: 1, TimeSpan.FromSeconds(5)) ? 0 : 6;
     }
 
+    private static int RunSingleInstanceTests()
+    {
+        var key = "DropSpot.Smoke." + Guid.NewGuid().ToString("N");
+        using var activated = new ManualResetEventSlim(false);
+        using var first = new SingleInstanceCoordinator(key);
+        using var second = new SingleInstanceCoordinator(key);
+        if (!first.IsFirstInstance || second.IsFirstInstance)
+        {
+            return 60;
+        }
+
+        first.StartListening(activated.Set);
+        second.SignalActivation();
+        if (!activated.Wait(TimeSpan.FromSeconds(2)))
+        {
+            return 61;
+        }
+
+        var command = StartupRegistration.BuildCommand(@"C:\Program Files\DropSpot\DropSpot.exe");
+        return command == "\"C:\\Program Files\\DropSpot\\DropSpot.exe\" --startup" ? 0 : 62;
+    }
+
     private static int RunBufferTests()
     {
         var start = DateTime.UtcNow;
@@ -190,7 +219,8 @@ public static class SmokeTest
             FloatingTop = 456,
             FloatingFavoriteCount = 8,
             FloatingBackgroundArgb = Color.FromArgb(32, 64, 96).ToArgb(),
-            FloatingOpacityPercent = 55
+            FloatingOpacityPercent = 55,
+            StartWithWindows = true
         };
         original.SaveTo(settingsPath);
 
@@ -215,6 +245,7 @@ public static class SmokeTest
             || recovered.FloatingFavoriteCount != 8
             || recovered.FloatingBackgroundArgb != Color.FromArgb(32, 64, 96).ToArgb()
             || recovered.FloatingOpacityPercent != 55
+            || !recovered.StartWithWindows
             || AppSettings.NormalizeFloatingFavoriteCount(0) != 1
             || AppSettings.NormalizeFloatingFavoriteCount(99) != 14
             || AppSettings.NormalizeFloatingOpacityPercent(0) != 20
@@ -410,7 +441,9 @@ public static class SmokeTest
                 Array.Empty<string>(),
                 floatingFavoriteCount: 8,
                 floatingBackgroundArgb: appearanceColor.ToArgb(),
-                floatingOpacityPercent: 20);
+                floatingOpacityPercent: 20,
+                startWithWindows: true);
+
             settingsForm.CreateControl();
             quickMenu.Refresh();
             infoPopup.Refresh();
@@ -433,6 +466,7 @@ public static class SmokeTest
                 || settingsForm.FloatingFavoriteCount != 8
                 || settingsForm.FloatingBackgroundArgb != appearanceColor.ToArgb()
                 || settingsForm.FloatingOpacityPercent != 20
+                || !settingsForm.StartWithWindows
                 || !ContainsControlText(settingsForm, $"版本：{Application.ProductVersion}")
                 || !ContainsControlText(settingsForm, "开发者：cslm"))
             {

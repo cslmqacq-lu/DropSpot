@@ -40,6 +40,7 @@ public sealed class MainForm : Form
     private readonly Button _activeTabButton = new();
     private readonly Button _favoriteTabButton = new();
     private readonly string? _settingsWarning;
+    private readonly bool _startMinimized;
     private FloatingFolderForm? _floatingForm;
     private FolderActivity? _latestFolder;
     private bool _isMonitoring;
@@ -50,8 +51,9 @@ public sealed class MainForm : Form
     private Rectangle _mainWindowRestoreBounds;
     private FormWindowState _mainWindowRestoreState = FormWindowState.Normal;
 
-    public MainForm()
+    public MainForm(bool startMinimized = false)
     {
+        _startMinimized = startMinimized;
         Text = $"DropSpot v{Application.ProductVersion}";
         MinimumSize = new Size(460, 500);
         Size = new Size(500, 610);
@@ -62,7 +64,15 @@ public sealed class MainForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
 
         BuildUi();
-        _settings = AppSettings.Load(out _settingsWarning);
+        _settings = AppSettings.Load(out var settingsWarning);
+        if (!StartupRegistration.TryApply(_settings.StartWithWindows, out var startupError))
+        {
+            settingsWarning = string.IsNullOrWhiteSpace(settingsWarning)
+                ? $"开机启动设置失败：{startupError}"
+                : $"{settingsWarning}；开机启动设置失败：{startupError}";
+        }
+
+        _settingsWarning = settingsWarning;
         _floatingForm = new FloatingFolderForm(
             OpenLatestFolder,
             OpenFolder,
@@ -135,6 +145,11 @@ public sealed class MainForm : Form
             {
                 SetStatus(_settingsWarning);
             }
+
+            if (_startMinimized)
+            {
+                BeginInvoke(() => WindowState = FormWindowState.Minimized);
+            }
         };
         UpdateStatus();
     }
@@ -143,6 +158,11 @@ public sealed class MainForm : Form
     {
         base.OnHandleCreated(e);
         EnableDarkTitleBar();
+    }
+
+    internal void ActivateFromExternalRequest()
+    {
+        RestoreMainWindow();
     }
 
     private void BuildUi()
@@ -470,7 +490,8 @@ public sealed class MainForm : Form
             _excludedPaths,
             _settings.FloatingFavoriteCount,
             _settings.FloatingBackgroundArgb,
-            _settings.FloatingOpacityPercent);
+            _settings.FloatingOpacityPercent,
+            _settings.StartWithWindows);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -484,6 +505,8 @@ public sealed class MainForm : Form
         _settings.FloatingFavoriteCount = dialog.FloatingFavoriteCount;
         _settings.FloatingBackgroundArgb = dialog.FloatingBackgroundArgb;
         _settings.FloatingOpacityPercent = dialog.FloatingOpacityPercent;
+        _settings.StartWithWindows = dialog.StartWithWindows;
+        _ = StartupRegistration.TryApply(_settings.StartWithWindows, out var startupError);
         SaveSettings();
         ApplyFloatingAppearance();
         UpdateFloatingFavorites();
@@ -500,6 +523,11 @@ public sealed class MainForm : Form
         else
         {
             UpdateStatus();
+        }
+
+        if (!string.IsNullOrWhiteSpace(startupError))
+        {
+            SetStatus($"开机启动设置失败：{startupError}");
         }
     }
 
