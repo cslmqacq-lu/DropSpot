@@ -9,21 +9,6 @@
 $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 
-function New-RoundedRectanglePath([System.Drawing.Rectangle]$Rectangle, [int]$Radius) {
-    $path = [System.Drawing.Drawing2D.GraphicsPath]::new()
-    $diameter = [Math]::Max(2, $Radius * 2)
-    $arc = [System.Drawing.Rectangle]::new($Rectangle.X, $Rectangle.Y, $diameter, $diameter)
-    $path.AddArc($arc, 180, 90)
-    $arc.X = $Rectangle.Right - $diameter
-    $path.AddArc($arc, 270, 90)
-    $arc.Y = $Rectangle.Bottom - $diameter
-    $path.AddArc($arc, 0, 90)
-    $arc.X = $Rectangle.X
-    $path.AddArc($arc, 90, 90)
-    $path.CloseFigure()
-    return $path
-}
-
 $sourceFullPath = [System.IO.Path]::GetFullPath($SourcePath)
 $outputFullPath = [System.IO.Path]::GetFullPath($OutputPath)
 $outputDirectory = Split-Path $outputFullPath -Parent
@@ -37,15 +22,7 @@ $sizes = @(16, 24, 32, 48, 64, 128, 256)
 $images = New-Object System.Collections.Generic.List[byte[]]
 
 try {
-    $panelX = [int][Math]::Round($source.Width * 0.165)
-    $panelY = [int][Math]::Round($source.Height * 0.37)
-    $sourceRect = [System.Drawing.Rectangle]::new(
-        $panelX,
-        $panelY,
-        [int][Math]::Round($source.Width * 0.68),
-        [int][Math]::Round($source.Height * 0.49))
-    $leftColor = $source.GetPixel(0, [Math]::Min($source.Height - 1, [int]($source.Height / 2)))
-    $rightColor = $source.GetPixel($source.Width - 1, [Math]::Min($source.Height - 1, [int]($source.Height / 2)))
+    $sourceRect = [System.Drawing.Rectangle]::new(0, 0, $source.Width, $source.Height)
 
     foreach ($size in $sizes) {
         $bitmap = [System.Drawing.Bitmap]::new(
@@ -59,22 +36,11 @@ try {
             $graphics.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
             $graphics.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
 
-            $canvas = [System.Drawing.Rectangle]::new(0, 0, $size, $size)
-            $background = [System.Drawing.Drawing2D.LinearGradientBrush]::new(
-                $canvas,
-                $leftColor,
-                $rightColor,
-                0.0)
-            try {
-                $graphics.FillRectangle($background, $canvas)
-            }
-            finally {
-                $background.Dispose()
-            }
+            $graphics.Clear([System.Drawing.Color]::Transparent)
 
             $scale = [Math]::Min(
-                ($size * 0.88) / $sourceRect.Width,
-                ($size * 0.52) / $sourceRect.Height)
+                ($size * 0.94) / $sourceRect.Width,
+                ($size * 0.94) / $sourceRect.Height)
             $targetWidth = [Math]::Max(1, [int][Math]::Round($sourceRect.Width * $scale))
             $targetHeight = [Math]::Max(1, [int][Math]::Round($sourceRect.Height * $scale))
             $target = [System.Drawing.Rectangle]::new(
@@ -82,16 +48,7 @@ try {
                 [int](($size - $targetHeight) / 2),
                 $targetWidth,
                 $targetHeight)
-            $clipPath = New-RoundedRectanglePath $target ([Math]::Max(1, [int][Math]::Round($size * 0.07)))
-            $graphicsState = $graphics.Save()
-            try {
-                $graphics.SetClip($clipPath)
-                $graphics.DrawImage($source, $target, $sourceRect, [System.Drawing.GraphicsUnit]::Pixel)
-            }
-            finally {
-                $graphics.Restore($graphicsState)
-                $clipPath.Dispose()
-            }
+            $graphics.DrawImage($source, $target, $sourceRect, [System.Drawing.GraphicsUnit]::Pixel)
 
             $stream = New-Object System.IO.MemoryStream
             try {
