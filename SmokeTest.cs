@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 public static class SmokeTest
 {
@@ -21,7 +21,7 @@ public static class SmokeTest
 
     public static int Run()
     {
-        var tempRoot = Path.Combine(Path.GetTempPath(), "DiskWriteWatcherSmoke-" + Guid.NewGuid().ToString("N"));
+        var tempRoot = Path.Combine(Path.GetTempPath(), "DropSpotSmoke-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(tempRoot);
 
         try
@@ -226,7 +226,49 @@ public static class SmokeTest
 
         File.Delete(settingsPath);
         recovered = AppSettings.LoadFrom(settingsPath, out warning);
-        return warning is not null && recovered.WatchScopes.Count == 1 ? 0 : 31;
+        if (warning is null || recovered.WatchScopes.Count != 1)
+        {
+            return 31;
+        }
+
+        var legacyPath = Path.Combine(tempRoot, "legacy", "settings.json");
+        var currentPath = Path.Combine(tempRoot, "current", "settings.json");
+        original.SaveTo(legacyPath);
+        if (!AppSettings.MigrateLegacySettings(legacyPath, currentPath, out var migrationWarning)
+            || string.IsNullOrWhiteSpace(migrationWarning)
+            || !File.Exists(currentPath))
+        {
+            return 32;
+        }
+
+        var migrated = AppSettings.LoadFrom(currentPath, out warning);
+        if (warning is not null
+            || migrated.FavoriteFolders.Count != 1
+            || migrated.FavoriteFolders[0].Path != @"C:\Projects"
+            || migrated.FloatingFavoriteCount != 8)
+        {
+            return 33;
+        }
+
+        new AppSettings
+        {
+            WatchScopes = new List<SavedWatchScope>
+            {
+                new() { Path = @"Z:\", Enabled = true }
+            }
+        }.SaveTo(legacyPath);
+
+        if (AppSettings.MigrateLegacySettings(legacyPath, currentPath, out migrationWarning))
+        {
+            return 34;
+        }
+
+        migrated = AppSettings.LoadFrom(currentPath, out warning);
+        return warning is null
+            && migrated.WatchScopes.Count == 1
+            && migrated.WatchScopes[0].Path == @"C:\"
+            ? 0
+            : 35;
     }
 
     private static int RunPlacementTests()

@@ -1,7 +1,7 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 public sealed class MainForm : Form
 {
@@ -52,7 +52,7 @@ public sealed class MainForm : Form
 
     public MainForm()
     {
-        Text = $"活跃文件夹 v{Application.ProductVersion}";
+        Text = $"DropSpot v{Application.ProductVersion}";
         MinimumSize = new Size(460, 500);
         Size = new Size(500, 610);
         StartPosition = FormStartPosition.CenterScreen;

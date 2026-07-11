@@ -1,6 +1,6 @@
 using System.Text.Json;
 
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 public sealed class AppSettings
 {
@@ -47,7 +47,58 @@ public sealed class AppSettings
 
     public static AppSettings Load(out string? warning)
     {
-        return LoadFrom(SettingsPath, out warning);
+        _ = MigrateLegacySettings(LegacySettingsPath, SettingsPath, out var migrationWarning);
+        var settings = LoadFrom(SettingsPath, out warning);
+        if (!string.IsNullOrWhiteSpace(migrationWarning))
+        {
+            warning = string.IsNullOrWhiteSpace(warning)
+                ? migrationWarning
+                : $"{migrationWarning}；{warning}";
+        }
+
+        return settings;
+    }
+
+    internal static bool MigrateLegacySettings(string legacyPath, string currentPath, out string? warning)
+    {
+        warning = null;
+        if (File.Exists(currentPath) || File.Exists(currentPath + ".bak"))
+        {
+            return false;
+        }
+
+        var legacyBackupPath = legacyPath + ".bak";
+        if (!File.Exists(legacyPath) && !File.Exists(legacyBackupPath))
+        {
+            return false;
+        }
+
+        try
+        {
+            var directory = Path.GetDirectoryName(currentPath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            if (File.Exists(legacyPath))
+            {
+                File.Copy(legacyPath, currentPath, overwrite: false);
+            }
+
+            if (File.Exists(legacyBackupPath))
+            {
+                File.Copy(legacyBackupPath, currentPath + ".bak", overwrite: false);
+            }
+
+            warning = "已从旧版 DiskWriteWatcher 迁移设置";
+            return true;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            warning = $"旧版设置迁移失败：{ex.Message}";
+            return false;
+        }
     }
 
     internal static AppSettings LoadFrom(string path, out string? warning)
@@ -169,6 +220,12 @@ public sealed class AppSettings
     }
 
     private static string SettingsPath =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "DropSpot",
+            "settings.json");
+
+    private static string LegacySettingsPath =>
         Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "DiskWriteWatcher",

@@ -2,10 +2,10 @@
   #define MyAppVersion "1.0.0"
 #endif
 
-#define MyAppName "活跃文件夹"
-#define MyAppExeName "DiskWriteWatcher.exe"
+#define MyAppName "DropSpot"
+#define MyAppExeName "DropSpot.exe"
 #define MyAppPublisher "cslm"
-#define PortableDir "..\artifacts\portable\DiskWriteWatcher_v" + MyAppVersion + "_win-x64"
+#define PortableDir "..\artifacts\portable\DropSpot_v" + MyAppVersion + "_win-x64"
 
 [Setup]
 AppId={{6D2C8928-58E4-4E33-9E71-00BA91004EF8}
@@ -17,14 +17,14 @@ VersionInfoVersion={#MyAppVersion}
 VersionInfoCompany={#MyAppPublisher}
 VersionInfoDescription={#MyAppName} 安装程序
 VersionInfoProductName={#MyAppName}
-DefaultDirName={localappdata}\Programs\DiskWriteWatcher
+DefaultDirName={localappdata}\Programs\DropSpot
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
-OutputBaseFilename=DiskWriteWatcher_Setup_v{#MyAppVersion}_win-x64
+OutputBaseFilename=DropSpot_Setup_v{#MyAppVersion}_win-x64
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern

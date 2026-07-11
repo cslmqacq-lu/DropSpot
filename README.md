@@ -1,6 +1,6 @@
-# 活跃文件夹监视器
+# DropSpot
 
-一个低占用的 Windows 小工具，用来监视指定硬盘的文件新建、写入、更新和重命名事件，并优先按“最近活跃文件夹”展示，方便快速定位文件被写入到哪里。删除事件默认完全忽略。
+DropSpot 是一个低占用的 Windows 小工具，用来监视指定硬盘的文件新建、写入、更新和重命名事件，并优先按“最近活跃文件夹”展示，方便快速定位文件被写入到哪里。删除事件默认完全忽略。
 
 当前版本：`1.0.0`
 
@@ -9,7 +9,7 @@
 新版发布目录：
 
 ```powershell
-G:\AI开发相关\DiskWriteWatcher\bin\Release\net8.0-windows\win-x64\publish-dual-floating\DiskWriteWatcher.exe
+G:\AI开发相关\DropSpot\bin\Release\net8.0-windows\DropSpot.exe
 ```
 
 也可以在项目目录运行：
@@ -59,7 +59,7 @@ dotnet run
 - 收藏夹保存在现有设置中，活动时间最多每 30 秒批量保存一次。
 - 收藏页使用独立轻量行控件，不占用活跃列表的 6 个位置。
 - 主逻辑是“监视硬盘 + 排除文件夹”，更适合发现写入位置。
-- 设置会原子保存到 `%AppData%\DiskWriteWatcher\settings.json`，并保留一个 `.bak` 备份。
+- 设置会原子保存到 `%AppData%\DropSpot\settings.json`，并保留一个 `.bak` 备份；首次启动会自动复制旧版 `%AppData%\DiskWriteWatcher` 设置。
 
 ## 当前边界
 
@@ -79,7 +79,7 @@ dotnet run -- --smoke-test
 发布版也可以验证：
 
 ```powershell
-$p = Start-Process -FilePath "G:\AI开发相关\DiskWriteWatcher\bin\Release\net8.0-windows\win-x64\publish-dual-floating\DiskWriteWatcher.exe" -ArgumentList "--smoke-test" -Wait -PassThru
+$p = Start-Process -FilePath "G:\AI开发相关\DropSpot\bin\Release\net8.0-windows\DropSpot.exe" -ArgumentList "--smoke-test" -Wait -PassThru
 $p.ExitCode
 ```
 

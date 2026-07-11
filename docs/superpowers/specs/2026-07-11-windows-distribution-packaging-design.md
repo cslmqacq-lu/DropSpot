@@ -2,12 +2,12 @@
 
 ## 目标
 
-为 DiskWriteWatcher `1.0.0` 同时生成可直接分发的便携版 ZIP 和 Windows 安装包。目标电脑无需预装 .NET 运行时。
+为 DropSpot `1.0.0` 同时生成可直接分发的便携版 ZIP 和 Windows 安装包。目标电脑无需预装 .NET 运行时。
 
 ## 应用信息
 
-- 产品名称：活跃文件夹
-- 程序文件名：`DiskWriteWatcher.exe`
+- 产品名称：DropSpot
+- 程序文件名：`DropSpot.exe`
 - 版本：从项目文件读取，本次为 `1.0.0`
 - 开发者：`cslm`
 - 运行平台：Windows x64
@@ -18,8 +18,8 @@
 
 - 使用 .NET 8 `win-x64` 自包含单文件发布。
 - 启用单文件压缩和原生库自解压，不附带 PDB。
-- ZIP 内包含 `DiskWriteWatcher.exe` 和中文 `README.txt`。
-- 文件名为 `DiskWriteWatcher_v1.0.0_win-x64_portable.zip`。
+- ZIP 内包含 `DropSpot.exe` 和中文 `README.txt`。
+- 文件名为 `DropSpot_v1.0.0_win-x64_portable.zip`。
 
 ## 安装版
 
@@ -27,8 +27,8 @@
 - 默认安装到 Windows 标准应用目录。
 - 创建开始菜单快捷方式，桌面快捷方式作为可选任务。
 - 支持安装后启动与标准卸载入口。
-- 不删除 `%AppData%\DiskWriteWatcher`，确保覆盖安装和卸载不会清空用户设置。
-- 文件名为 `DiskWriteWatcher_Setup_v1.0.0_win-x64.exe`。
+- 不删除 `%AppData%\DropSpot`，确保覆盖安装和卸载不会清空用户设置。
+- 文件名为 `DropSpot_Setup_v1.0.0_win-x64.exe`。
 
 ## 校验与复现
 

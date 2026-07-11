@@ -1,7 +1,7 @@
 using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 public static class ShellIconProvider
 {

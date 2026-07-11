@@ -26,7 +26,7 @@
 
 设置窗口新增“关于”页，显示：
 
-- 软件名：活跃文件夹。
+- 软件名：DropSpot。
 - 版本：动态读取 `Application.ProductVersion`。
 - 开发者：cslm。
 

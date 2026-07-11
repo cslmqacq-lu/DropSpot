@@ -1,4 +1,4 @@
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 static class Program
 {

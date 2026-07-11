@@ -1,4 +1,4 @@
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 internal sealed class FavoriteQuickMenuForm : Form
 {

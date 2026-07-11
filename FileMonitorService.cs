@@ -3,7 +3,7 @@ using System.ComponentModel;
 using System.Runtime.InteropServices;
 using Microsoft.Win32.SafeHandles;
 
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 public sealed class FileMonitorService : IDisposable
 {

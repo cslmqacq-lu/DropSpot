@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 internal static class WindowTint
 {

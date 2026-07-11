@@ -1,4 +1,4 @@
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 public sealed class ChangeRecord
 {

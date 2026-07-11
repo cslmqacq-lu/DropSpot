@@ -1,4 +1,4 @@
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 public sealed class SettingsForm : Form
 {
@@ -309,7 +309,7 @@ public sealed class SettingsForm : Form
 
         root.Controls.Add(new Label
         {
-            Text = "活跃文件夹",
+            Text = "DropSpot",
             Dock = DockStyle.Fill,
             ForeColor = Theme.Text,
             Font = new Font("Microsoft YaHei UI", 14F, FontStyle.Bold),

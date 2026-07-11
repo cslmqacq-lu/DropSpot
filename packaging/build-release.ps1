@@ -4,7 +4,7 @@
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = [System.IO.Path]::GetFullPath((Split-Path $PSScriptRoot -Parent))
-$ProjectFile = Join-Path $ProjectRoot "DiskWriteWatcher.csproj"
+$ProjectFile = Join-Path $ProjectRoot "DropSpot.csproj"
 $ArtifactsRoot = Join-Path $ProjectRoot "artifacts"
 $DistRoot = Join-Path $ProjectRoot "dist"
 
@@ -28,11 +28,11 @@ if ([string]::IsNullOrWhiteSpace($version)) {
     throw "无法从项目文件读取版本号"
 }
 
-$portableName = "DiskWriteWatcher_v${version}_win-x64"
+$portableName = "DropSpot_v${version}_win-x64"
 $portableRoot = Join-Path $ArtifactsRoot "portable"
 $portableDir = Join-Path $portableRoot $portableName
 $portableZip = Join-Path $DistRoot "${portableName}_portable.zip"
-$installerName = "DiskWriteWatcher_Setup_v${version}_win-x64.exe"
+$installerName = "DropSpot_Setup_v${version}_win-x64.exe"
 $installerPath = Join-Path $DistRoot $installerName
 $checksumsPath = Join-Path $DistRoot "SHA256SUMS.txt"
 
@@ -46,7 +46,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Release 构建失败" }
 
     if (-not $SkipTests) {
-        $testExe = Join-Path $ProjectRoot "bin\Release\net8.0-windows\DiskWriteWatcher.exe"
+        $testExe = Join-Path $ProjectRoot "bin\Release\net8.0-windows\DropSpot.exe"
         $test = Start-Process -FilePath $testExe -ArgumentList "--smoke-test" -WindowStyle Hidden -Wait -PassThru
         if ($test.ExitCode -ne 0) { throw "Smoke test 失败，退出码：$($test.ExitCode)" }
     }
@@ -106,7 +106,7 @@ try {
     $iscc = $innoCandidates | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
     if (-not $iscc) { throw "未找到 Inno Setup 6 编译器 ISCC.exe" }
 
-    & $iscc "/DMyAppVersion=$version" (Join-Path $ProjectRoot "installer\DiskWriteWatcher.iss")
+    & $iscc "/DMyAppVersion=$version" (Join-Path $ProjectRoot "installer\DropSpot.iss")
     if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $installerPath)) {
         throw "安装包生成失败"
     }

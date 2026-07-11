@@ -1,7 +1,7 @@
 using System.Drawing.Drawing2D;
 using System.Runtime.InteropServices;
 
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 public sealed class FloatingFolderForm : Form
 {
@@ -78,7 +78,7 @@ public sealed class FloatingFolderForm : Form
         _isMonitoring = isMonitoring;
 
         FormBorderStyle = FormBorderStyle.None;
-        Text = "活跃文件夹快捷入口";
+        Text = "DropSpot 快捷入口";
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;

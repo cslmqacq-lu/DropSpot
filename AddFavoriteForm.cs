@@ -1,6 +1,6 @@
 using System.Runtime.InteropServices;
 
-namespace DiskWriteWatcher;
+namespace DropSpot;
 
 internal sealed class AddFavoriteForm : Form
 {
