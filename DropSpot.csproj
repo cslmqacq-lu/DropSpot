@@ -22,4 +22,8 @@
     <Copyright>Copyright © 2026 cslm</Copyright>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="assets\DropSpot.ico" LogicalName="DropSpot.AppIcon.ico" />
+  </ItemGroup>
+
 </Project>

@@ -55,6 +55,7 @@ public sealed class MainForm : Form
     {
         _startMinimized = startMinimized;
         Text = $"DropSpot v{Application.ProductVersion}";
+        Icon = AppIcon.Create();
         MinimumSize = new Size(460, 500);
         Size = new Size(500, 610);
         StartPosition = FormStartPosition.CenterScreen;
