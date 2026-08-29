@@ -64,3 +64,43 @@ Run: `Start-Process .\bin\Release\net8.0-windows\DropSpot.exe`
 
 Expected: title-bar minimize leaves DropSpot on the taskbar; the new header icon opens the floating window.
 
+### Task 2: Add taskbar minimize to the floating context menu
+
+**Files:**
+- Modify: `FloatingFolderForm.cs`
+- Modify: `MainForm.cs`
+- Test: `SmokeTest.cs`
+
+**Interfaces:**
+- Consumes: `FloatingFolderForm` window-control menu and `MainForm` floating-window cleanup behavior.
+- Produces: a `minimizeMainWindow` callback and `MinimizeMainWindow()` transition.
+
+- [ ] **Step 1: Add a failing menu-contract smoke assertion**
+
+Construct `FloatingFolderForm` with a minimize callback, locate the “最小化到任务栏” menu item, invoke it, and assert the callback runs exactly once.
+
+- [ ] **Step 2: Run the Release build and verify failure**
+
+Run: `dotnet build .\DropSpot.csproj -c Release --no-restore`
+
+Expected: compile failure because `FloatingFolderForm` does not yet accept the minimize callback.
+
+- [ ] **Step 3: Add the callback and taskbar transition**
+
+Add `Action minimizeMainWindow` to `FloatingFolderForm`, place “最小化到任务栏” immediately after “恢复主窗口”, and invoke the callback on click. Implement `MainForm.MinimizeMainWindow()` so it hides the floating form and pinned forms, restores the main form's taskbar identity and saved placement, then sets `WindowState` to `FormWindowState.Minimized` without stopping monitoring.
+
+- [ ] **Step 4: Run build and complete smoke tests**
+
+Run: `dotnet build .\DropSpot.csproj -c Release --no-restore`
+
+Expected: 0 warnings and 0 errors.
+
+Run: `dotnet run --project .\DropSpot.csproj -- --smoke-test`
+
+Expected: all smoke stages complete with exit code 0, including the floating-menu minimize callback assertion.
+
+- [ ] **Step 5: Verify the real floating menu**
+
+Launch the Release executable, enter floating mode, invoke “最小化到任务栏”, and inspect the process window state.
+
+Expected: the floating windows disappear, the main window is iconic and visible to the Windows taskbar, and the process remains running.
