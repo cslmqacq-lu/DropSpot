@@ -104,3 +104,41 @@ Expected: all smoke stages complete with exit code 0, including the floating-men
 Launch the Release executable, enter floating mode, invoke “最小化到任务栏”, and inspect the process window state.
 
 Expected: the floating windows disappear, the main window is iconic and visible to the Windows taskbar, and the process remains running.
+
+### Task 3: Restore floating origin back to floating mode
+
+**Files:**
+- Modify: `MainForm.cs`
+- Test: `SmokeTest.cs`
+
+**Interfaces:**
+- Consumes: `MinimizeMainWindow()`, `EnterFloatingMode()`, `RestoreMainWindow()`, and Windows `WM_SYSCOMMAND` messages.
+- Produces: an origin-aware taskbar restore rule and `ShouldRestoreFloatingMode(bool, int)` test seam.
+
+- [ ] **Step 1: Add failing restore-routing assertions**
+
+Assert that `SC_RESTORE` routes to floating mode only when the taskbar minimization originated from the floating menu. Assert that unrelated system commands and native main-window minimization do not route to floating mode.
+
+- [ ] **Step 2: Run the Release build and verify failure**
+
+Run: `dotnet build .\DropSpot.csproj -c Release --no-restore`
+
+Expected: compile failure because the restore-routing helper does not exist.
+
+- [ ] **Step 3: Track origin and intercept restore**
+
+Set a `_restoreFloatingAfterTaskbarMinimize` marker inside `MinimizeMainWindow()`. Override `WndProc` to consume `WM_SYSCOMMAND/SC_RESTORE` only while the marker is set, clear it, and invoke `EnterFloatingMode()` without restoring the main window. Clear the marker in `RestoreMainWindow()` so explicit restore and single-instance activation continue to show the main window.
+
+- [ ] **Step 4: Run build and complete smoke tests**
+
+Run: `dotnet build .\DropSpot.csproj -c Release --no-restore`
+
+Expected: 0 warnings and 0 errors.
+
+Run: `dotnet run --project .\DropSpot.csproj -- --smoke-test`
+
+Expected: every smoke stage completes with exit code 0, including restore-routing assertions.
+
+- [ ] **Step 5: Verify both taskbar restore paths**
+
+First minimize from the main title bar and restore from the taskbar; the main window must return. Then enter floating mode, use “最小化到任务栏”, and restore from the taskbar; the floating window must return while the main window remains hidden.
