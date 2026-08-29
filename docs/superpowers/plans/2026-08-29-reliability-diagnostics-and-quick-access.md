@@ -64,7 +64,7 @@
 - Test: `SmokeTest.cs`
 
 **Interfaces:**
-- Produces: tray commands for main/floating/pause/diagnostics/exit and hotkeys `Ctrl+Alt+Space`, `Ctrl+Alt+F`.
+- Produces: tray commands for main/floating/pause/diagnostics/exit and native hotkey infrastructure. Final hotkey actions are implemented by `2026-08-29-configurable-global-hotkeys.md`.
 
 - [ ] Add command-state and hotkey ID smoke tests.
 - [ ] Build the tray menu and keep its pause label synchronized.

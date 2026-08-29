@@ -31,7 +31,7 @@ Each volume publishes a `VolumeMonitorStatus` snapshot with its root, state, mes
 
 `TrayIconController` owns a `NotifyIcon` menu with restore main window, open floating window, pause/continue monitoring, diagnostics, and exit. Closing the main window still exits the application; the tray icon is an additional access surface, not a hidden-lifetime change.
 
-`GlobalHotKeyManager` registers `Ctrl+Alt+Space` to show the floating window and `Ctrl+Alt+F` to open the latest active folder. Registration failures are logged and shown in diagnostics without blocking startup.
+`GlobalHotKeyManager` uses native Windows hotkey messages without polling. The final actions and configurable defaults are defined by `2026-08-29-configurable-global-hotkeys-design.md`, which supersedes the original shortcut proposal in this document.
 
 ### Activity history and pinned indicators
 
