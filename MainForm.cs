@@ -40,6 +40,10 @@ public sealed class MainForm : Form
     private readonly FlickerFreeFlowLayoutPanel _favoriteList = new();
     private readonly Panel _favoriteHost = new();
     private readonly Label _statusLabel = new();
+    private readonly Panel _elevationBanner = new();
+    private TableLayoutPanel? _rootLayout;
+    private bool _elevationBannerShown;
+    private bool _elevationNoticeShown;
     private readonly Label _emptyLabel = new();
     private readonly Label _favoriteEmptyLabel = new();
     private readonly Button _toggleButton = new();
@@ -81,18 +85,21 @@ public sealed class MainForm : Form
 
         BuildUi();
         _settings = AppSettings.Load(out var settingsWarning);
-        if (!StartupRegistration.TryApply(_settings.StartWithWindows, out var startupError))
+        var startupApplied = StartupRegistration.TryApply(_settings.StartWithWindows, out var startupError);
+        if (!string.IsNullOrWhiteSpace(startupError))
         {
+            var startupMessage = startupApplied ? startupError : $"开机启动设置失败：{startupError}";
+            AppLog.Warning(startupMessage);
             settingsWarning = string.IsNullOrWhiteSpace(settingsWarning)
-                ? $"开机启动设置失败：{startupError}"
-                : $"{settingsWarning}；开机启动设置失败：{startupError}";
+                ? startupMessage
+                : $"{settingsWarning}；{startupMessage}";
         }
 
         _settingsWarning = settingsWarning;
         _floatingForm = new FloatingFolderForm(
             OpenLatestFolder,
             OpenFile,
-            OpenFolder,
+            OpenActivityFolder,
             RestoreMainWindow,
             MinimizeMainWindow,
             ToggleMonitor,
@@ -109,7 +116,8 @@ public sealed class MainForm : Form
             ToggleMonitor,
             ShowActivityHistory,
             ShowDiagnostics,
-            Close);
+            Close,
+            Elevation.IsElevated ? null : RestartAsAdministrator);
         LoadSavedSettings();
         PopulateDrives();
         if (_excludedPaths.Count == 0)
@@ -242,10 +250,15 @@ public sealed class MainForm : Form
             Padding = new Padding(0),
             BackColor = Theme.Window
         };
+        root.RowCount = 4;
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 52));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 0));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         Controls.Add(root);
+        _rootLayout = root;
+        BuildElevationBanner();
+        root.Controls.Add(_elevationBanner, 0, 1);
 
         var header = new Panel
         {
@@ -344,7 +357,7 @@ public sealed class MainForm : Form
             BackColor = Theme.Window,
             Padding = new Padding(10, 5, 10, 5)
         };
-        root.Controls.Add(tabHost, 0, 1);
+        root.Controls.Add(tabHost, 0, 2);
 
         ConfigureTabButton(_activeTabButton, "活跃", selected: true);
         _activeTabButton.Location = new Point(10, 5);
@@ -362,7 +375,7 @@ public sealed class MainForm : Form
             BackColor = Theme.Window,
             Padding = new Padding(10, 10, 10, 10)
         };
-        root.Controls.Add(listHost, 0, 2);
+        root.Controls.Add(listHost, 0, 3);
 
         _folderList.Dock = DockStyle.Fill;
         _folderList.FlowDirection = FlowDirection.TopDown;
@@ -445,6 +458,90 @@ public sealed class MainForm : Form
         _emptyLabel.BringToFront();
     }
 
+    private void BuildElevationBanner()
+    {
+        _elevationBanner.Dock = DockStyle.Fill;
+        _elevationBanner.BackColor = Color.FromArgb(58, 44, 12);
+        _elevationBanner.Padding = new Padding(12, 0, 10, 0);
+        _elevationBanner.Visible = false;
+
+        var message = new Label
+        {
+            Text = "读取磁盘 USN 日志需要管理员权限，当前无法监视。",
+            ForeColor = Color.FromArgb(253, 224, 138),
+            BackColor = Color.Transparent,
+            TextAlign = ContentAlignment.MiddleLeft,
+            AutoEllipsis = true,
+            Dock = DockStyle.Fill
+        };
+
+        var restartButton = new Button
+        {
+            Text = "以管理员重启",
+            Dock = DockStyle.Right,
+            Width = 104,
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Color.FromArgb(120, 88, 20),
+            ForeColor = Color.White,
+            TabStop = false,
+            UseVisualStyleBackColor = false
+        };
+        restartButton.FlatAppearance.BorderColor = Color.FromArgb(180, 132, 30);
+        restartButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(150, 110, 26);
+        restartButton.Click += (_, _) => RestartAsAdministrator();
+
+        var buttonHost = new Panel
+        {
+            Dock = DockStyle.Right,
+            Width = 110,
+            Padding = new Padding(0, 5, 0, 5),
+            BackColor = Color.Transparent
+        };
+        buttonHost.Controls.Add(restartButton);
+        _elevationBanner.Controls.Add(message);
+        _elevationBanner.Controls.Add(buttonHost);
+        _toolTip.SetToolTip(restartButton, "以管理员身份重新启动 DropSpot，并改为管理员开机启动");
+    }
+
+    private void UpdateElevationBanner(IReadOnlyList<VolumeMonitorStatus> statuses)
+    {
+        var show = !Elevation.IsElevated && statuses.Any(status => status.AccessDenied);
+        if (_elevationBannerShown == show || _rootLayout is null)
+        {
+            return;
+        }
+
+        _elevationBannerShown = show;
+        _elevationBanner.Visible = show;
+        _rootLayout.RowStyles[1].Height = show ? 38 : 0;
+
+        // 悬浮窗模式或开机自启时看不到主窗口，用托盘气泡提示一次。
+        if (show && !_elevationNoticeShown && (_floatingModeActive || !Visible))
+        {
+            _elevationNoticeShown = true;
+            _trayIcon?.ShowNotice(
+                "DropSpot 需要管理员权限",
+                "读取磁盘 USN 日志需要管理员权限，点击此处以管理员身份重启。");
+        }
+    }
+
+    private void RestartAsAdministrator()
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        if (Elevation.TryStartElevatedInstance(_floatingModeActive, out var error))
+        {
+            AppLog.Info("以管理员身份重启 DropSpot");
+            Close();
+            return;
+        }
+
+        SetStatus(string.IsNullOrWhiteSpace(error) ? "以管理员身份重启失败" : error);
+    }
+
     private static void ConfigureTabButton(Button button, string text, bool selected)
     {
         button.Text = text;
@@ -505,6 +602,7 @@ public sealed class MainForm : Form
             AddExcludePath(path);
         }
 
+        _monitor.FilterCommonNoise = _settings.FilterCommonNoise;
         _favorites.Load(_settings.FavoriteFolders);
         _pinnedFolders.Load(_settings.PinnedFolders);
         _activityHistory.Load(_settings.ActivityHistory);
@@ -575,7 +673,9 @@ public sealed class MainForm : Form
             _settings.StartWithWindows,
             ShowDiagnostics,
             _settings.OpenLatestFolderHotKey,
-            _settings.CopyLatestFolderPathHotKey);
+            _settings.CopyLatestFolderPathHotKey,
+            _settings.FilterCommonNoise,
+            _settings.SelectLatestFileWhenOpeningFolder);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -588,6 +688,9 @@ public sealed class MainForm : Form
         _excludedPaths.AddRange(dialog.ExcludedPaths);
         _settings.FloatingFavoriteCount = dialog.FloatingFavoriteCount;
         _settings.StartWithWindows = dialog.StartWithWindows;
+        _settings.FilterCommonNoise = dialog.FilterCommonNoise;
+        _settings.SelectLatestFileWhenOpeningFolder = dialog.SelectLatestFileWhenOpeningFolder;
+        _monitor.FilterCommonNoise = _settings.FilterCommonNoise;
         var previousOpenHotKey = _settings.OpenLatestFolderHotKey.Clone();
         var previousCopyHotKey = _settings.CopyLatestFolderPathHotKey.Clone();
         _settings.OpenLatestFolderHotKey = dialog.OpenLatestFolderHotKey;
@@ -831,7 +934,7 @@ public sealed class MainForm : Form
                         expanded: _expandedFolders.Contains(folder.FolderPath),
                         isLatest: index == 0,
                         width,
-                        OpenFolder,
+                        OpenActivityFolder,
                         ToggleFolderExpanded,
                         OpenFile,
                         ExcludeFolder,
@@ -839,7 +942,8 @@ public sealed class MainForm : Form
                         AddFavorite,
                         _favorites.Contains,
                         PinFolder,
-                        _pinnedFolders.Contains);
+                        _pinnedFolders.Contains,
+                        RunFileCommand);
                     _folderCards.Add(folder.FolderPath, card);
                     _folderList.Controls.Add(card);
                 }
@@ -1119,9 +1223,11 @@ public sealed class MainForm : Form
         SetStatus($"已移除 {favorite.DisplayName}");
     }
 
-    private static void CopyPath(string path)
+    private void CopyPath(string path)
     {
-        Clipboard.SetText(path);
+        SetStatus(SafeClipboard.TrySetText(path, out var error)
+            ? $"已复制：{path}"
+            : $"复制失败：{error}");
     }
 
     private void UpdateFavoriteTabText()
@@ -1189,9 +1295,71 @@ public sealed class MainForm : Form
         SetStatus($"已排除 {folder.DisplayName}");
     }
 
-    private static void CopyFolderPath(FolderActivity folder)
+    private void CopyFolderPath(FolderActivity folder)
     {
-        Clipboard.SetText(folder.FolderPath);
+        CopyPath(folder.FolderPath);
+    }
+
+    private async void RunFileCommand(ChangeRecord record, FileCommand command)
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        switch (command)
+        {
+            case FileCommand.Open:
+                OpenFile(record);
+                return;
+            case FileCommand.CopyPath:
+                CopyPath(record.FilePath);
+                return;
+            case FileCommand.CopyName:
+                CopyPath(record.FileName);
+                return;
+            case FileCommand.CopyFile:
+                if (!File.Exists(record.FilePath))
+                {
+                    SetStatus($"文件不存在或已被移动：{record.FileName}");
+                    return;
+                }
+
+                SetStatus(SafeClipboard.TrySetFiles(new[] { record.FilePath }, out var copyError)
+                    ? $"已复制文件：{record.FileName}，可直接粘贴"
+                    : $"复制失败：{copyError}");
+                return;
+        }
+
+        try
+        {
+            var done = await Task.Run(() => command == FileCommand.Reveal
+                ? FileActions.TryRevealInExplorer(record.FilePath)
+                : FileActions.TryOpenWith(record.FilePath));
+            if (_isClosing || IsDisposed)
+            {
+                return;
+            }
+
+            if (!done)
+            {
+                SetStatus($"文件不存在或已被移动：{record.FileName}");
+                if (command == FileCommand.Reveal)
+                {
+                    OpenFolder(record.FolderPath);
+                }
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception
+            or InvalidOperationException
+            or UnauthorizedAccessException
+            or IOException)
+        {
+            if (!_isClosing && !IsDisposed)
+            {
+                SetStatus($"操作失败：{ex.Message}");
+            }
+        }
     }
 
     private async void OpenFile(ChangeRecord record)
@@ -1299,7 +1467,65 @@ public sealed class MainForm : Form
             return;
         }
 
-        OpenFolder(_latestFolder.FolderPath);
+        OpenActivityFolder(_latestFolder.FolderPath);
+    }
+
+    /// <summary>
+    /// 打开一个有活动记录的文件夹：开启“选中最新文件”时，在资源管理器中直接定位到最近写入的文件；
+    /// 没有可用文件或关闭该选项时，退回普通打开。
+    /// </summary>
+    private async void OpenActivityFolder(string folderPath)
+    {
+        if (_isClosing || string.IsNullOrWhiteSpace(folderPath))
+        {
+            return;
+        }
+
+        var activity = FindActivity(folderPath);
+        if (!_settings.SelectLatestFileWhenOpeningFolder || activity is null || activity.Files.Count == 0)
+        {
+            OpenFolder(folderPath);
+            return;
+        }
+
+        if (!_openingFolderPaths.Add(folderPath))
+        {
+            return;
+        }
+
+        var records = activity.Files.ToArray();
+        var revealed = false;
+        try
+        {
+            revealed = await Task.Run(() => FileActions.TryRevealInExplorer(FileActions.LatestExistingFile(records)));
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception
+            or InvalidOperationException
+            or UnauthorizedAccessException
+            or IOException)
+        {
+            AppLog.Warning($"定位最新文件失败：{ex.Message}");
+        }
+        finally
+        {
+            _openingFolderPaths.Remove(folderPath);
+        }
+
+        if (!revealed && !_isClosing && !IsDisposed)
+        {
+            OpenFolder(folderPath);
+        }
+    }
+
+    private FolderActivity? FindActivity(string folderPath)
+    {
+        if (_folders.TryGetValue(folderPath, out var folder))
+        {
+            return folder;
+        }
+
+        return _activityHistory.Items.FirstOrDefault(item =>
+            string.Equals(item.FolderPath, folderPath.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
     }
 
     private void CopyLatestFolderPath()
@@ -1310,16 +1536,7 @@ public sealed class MainForm : Form
             return;
         }
 
-        try
-        {
-            Clipboard.SetText(_latestFolder.FolderPath);
-            SetStatus($"已复制：{_latestFolder.FolderPath}");
-        }
-        catch (ExternalException ex)
-        {
-            SetStatus($"复制失败：{ex.Message}");
-            AppLog.Warning($"复制最新文件夹地址失败：{ex.Message}");
-        }
+        CopyPath(_latestFolder.FolderPath);
     }
 
     private void EnterFloatingMode()
@@ -1582,7 +1799,7 @@ public sealed class MainForm : Form
             SyncPinnedFolderForms();
         }
 
-        OpenFolder(path);
+        OpenActivityFolder(path);
     }
 
     private void DisposePinnedFolderForms()
@@ -1615,32 +1832,8 @@ public sealed class MainForm : Form
 
     private bool IsExcluded(string path)
     {
-        return _excludedPaths.Any(excluded => IsPathUnder(path, excluded));
-    }
-
-    private static bool IsPathUnder(string path, string excluded)
-    {
-        if (string.IsNullOrWhiteSpace(excluded))
-        {
-            return false;
-        }
-
-        if (excluded is "$Recycle.Bin" or "System Volume Information")
-        {
-            return path.Contains("\\" + excluded + "\\", StringComparison.OrdinalIgnoreCase);
-        }
-
-        try
-        {
-            var fullPath = Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            var fullExcluded = Path.GetFullPath(excluded).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
-            return string.Equals(fullPath, fullExcluded, StringComparison.OrdinalIgnoreCase)
-                || fullPath.StartsWith(fullExcluded + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
-        }
-        catch
-        {
-            return path.StartsWith(excluded, StringComparison.OrdinalIgnoreCase);
-        }
+        return (_settings.FilterCommonNoise && PathRules.ContainsCommonNoiseDirectory(path))
+            || PathRules.MatchesAny(path, _excludedPaths);
     }
 
     private void UpdateStatus()
@@ -1666,6 +1859,7 @@ public sealed class MainForm : Form
 
         _floatingForm?.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
         _trayIcon?.UpdateMonitoring(_isMonitoring, statuses);
+        UpdateElevationBanner(statuses);
     }
 
     private void SaveSettings()
@@ -1760,7 +1954,7 @@ public sealed class MainForm : Form
 
     private void ShowActivityHistory()
     {
-        using var dialog = new ActivityHistoryForm(() => _activityHistory.Items, OpenFolder);
+        using var dialog = new ActivityHistoryForm(() => _activityHistory.Items, OpenActivityFolder);
         if (Visible && WindowState != FormWindowState.Minimized)
         {
             dialog.ShowDialog(this);

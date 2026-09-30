@@ -16,7 +16,15 @@ public sealed class FileMonitorService : IDisposable
     private readonly ConcurrentDictionary<string, RecentFileEvent> _recentEvents = new(StringComparer.OrdinalIgnoreCase);
     private readonly object _excludedLock = new();
     private string[] _excludedPaths = Array.Empty<string>();
+    private volatile bool _filterCommonNoise = true;
     private bool _disposed;
+
+    /// <summary>是否过滤 .git、node_modules、浏览器缓存等常见噪音目录。</summary>
+    public bool FilterCommonNoise
+    {
+        get => _filterCommonNoise;
+        set => _filterCommonNoise = value;
+    }
 
     public event EventHandler<ChangeRecord>? Changed;
     public event EventHandler<string>? MonitorError;
@@ -73,7 +81,8 @@ public sealed class FileMonitorService : IDisposable
     {
         var normalizedPaths = excludedPaths
             .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(NormalizeDirectoryPath)
+            .Select(PathRules.NormalizeRule)
+            .Where(path => path.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .OrderBy(path => path.Length)
             .ToArray();
@@ -102,7 +111,9 @@ public sealed class FileMonitorService : IDisposable
             return;
         }
 
-        if (ShouldIgnore(record.FolderPath, record.FileName) || IsExcluded(record.FolderPath) || IsExcluded(record.FilePath))
+        if (ShouldIgnore(record.FolderPath, record.FileName)
+            || (_filterCommonNoise && PathRules.ContainsCommonNoiseDirectory(record.FolderPath))
+            || IsExcluded(record.FilePath))
         {
             return;
         }
@@ -124,17 +135,14 @@ public sealed class FileMonitorService : IDisposable
 
     private bool IsExcluded(string path)
     {
-        var normalized = NormalizeDirectoryPath(path);
         string[] excludedPaths;
         lock (_excludedLock)
         {
             excludedPaths = _excludedPaths;
         }
 
-        return excludedPaths.Any(excluded =>
-            string.Equals(normalized, excluded, StringComparison.OrdinalIgnoreCase)
-            || normalized.StartsWith(excluded + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
-            || normalized.Contains(Path.DirectorySeparatorChar + excluded + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+        // 同时检查文件路径中的每一级目录与文件名，所以既能排除完整路径，也能按名称排除（如 node_modules、*.log）。
+        return PathRules.MatchesAny(path, excludedPaths);
     }
 
     private static bool ShouldSuppressNearDuplicate(string previousKind, string currentKind)
@@ -178,11 +186,9 @@ public sealed class FileMonitorService : IDisposable
         }
     }
 
-    private static bool ShouldIgnore(string folderPath, string fileName)
+    internal static bool ShouldIgnore(string folderPath, string fileName)
     {
-        if (fileName.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
-            || fileName.EndsWith(".crdownload", StringComparison.OrdinalIgnoreCase)
-            || fileName.EndsWith(".part", StringComparison.OrdinalIgnoreCase))
+        if (PathRules.IsTemporaryFileName(fileName))
         {
             return true;
         }
@@ -260,6 +266,7 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
         | UsnReasonRenameNewName;
 
     private const uint FileAttributeDirectory = 0x00000010;
+    private const int ErrorInvalidParameter = 87;
 
     private readonly string _volumeRoot;
     private readonly string[] _scopePaths;
@@ -276,6 +283,7 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
     private SafeFileHandle? _volumeHandle;
     private VolumeMonitorStatus _status;
     private long _resumeUsn;
+    private bool _useV1ReadInput = true;
     private ulong _resumeJournalId;
 
     public UsnJournalVolumeWatcher(
@@ -358,7 +366,8 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
                     State = VolumeMonitorState.Healthy,
                     Message = "监视正常",
                     RetryCount = retryCount,
-                    LastConnectedAt = DateTime.Now
+                    LastConnectedAt = DateTime.Now,
+                    AccessDenied = false
                 });
 
                 ReadJournal(volumeHandle, buffer, nextUsn, journal.UsnJournalId, token);
@@ -367,17 +376,21 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
             {
                 retryCount++;
                 var unsupported = ex is NotSupportedException;
-                var message = $"{_volumeRoot} USN 监听异常：{ex.Message}";
+                var accessDenied = Elevation.IsAccessDenied(ex);
+                var message = accessDenied
+                    ? $"{_volumeRoot} 需要管理员权限才能读取 USN 日志"
+                    : $"{_volumeRoot} USN 监听异常：{ex.Message}";
                 ReportError(message);
                 PublishStatus(Status with
                 {
                     State = unsupported ? VolumeMonitorState.Error : connectedOnce ? VolumeMonitorState.Reconnecting : VolumeMonitorState.Waiting,
-                    Message = ex.Message,
+                    Message = accessDenied ? "需要管理员权限" : ex.Message,
                     RetryCount = retryCount,
-                    LastErrorAt = DateTime.Now
+                    LastErrorAt = DateTime.Now,
+                    AccessDenied = accessDenied
                 });
 
-                var delay = unsupported ? TimeSpan.FromSeconds(30) : RetryDelay(retryCount);
+                var delay = unsupported || accessDenied ? TimeSpan.FromSeconds(30) : RetryDelay(retryCount);
                 if (token.WaitHandle.WaitOne(delay))
                 {
                     break;
@@ -407,17 +420,46 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
         var nextUsn = startUsn;
         while (!token.IsCancellationRequested)
         {
-            var input = new ReadUsnJournalData
+            // 优先使用 V1 输入结构并允许 V2~V3 记录：ReFS 使用 128 位文件 ID，只能以 V3 记录返回。
+            // 旧系统不认识 V1 结构时（ERROR_INVALID_PARAMETER）自动退回 V0。
+            bool succeeded;
+            int bytesReturned;
+            if (_useV1ReadInput)
             {
-                StartUsn = nextUsn,
-                ReasonMask = RelevantReasonMask,
-                ReturnOnlyOnClose = 1,
-                Timeout = 1,
-                BytesToWaitFor = 1,
-                UsnJournalId = journalId
-            };
+                var inputV1 = new ReadUsnJournalDataV1
+                {
+                    StartUsn = nextUsn,
+                    ReasonMask = RelevantReasonMask,
+                    ReturnOnlyOnClose = 1,
+                    Timeout = 1,
+                    BytesToWaitFor = 1,
+                    UsnJournalId = journalId,
+                    MinMajorVersion = 2,
+                    MaxMajorVersion = 3
+                };
+                succeeded = DeviceIoControl(volumeHandle, FsctlReadUsnJournal, ref inputV1, Marshal.SizeOf<ReadUsnJournalDataV1>(), buffer, buffer.Length, out bytesReturned, IntPtr.Zero);
+                if (!succeeded && Marshal.GetLastWin32Error() == ErrorInvalidParameter)
+                {
+                    _useV1ReadInput = false;
+                    ReportError($"{_volumeRoot} 系统不支持 USN V1 读取结构，已退回 V0");
+                    continue;
+                }
+            }
+            else
+            {
+                var input = new ReadUsnJournalData
+                {
+                    StartUsn = nextUsn,
+                    ReasonMask = RelevantReasonMask,
+                    ReturnOnlyOnClose = 1,
+                    Timeout = 1,
+                    BytesToWaitFor = 1,
+                    UsnJournalId = journalId
+                };
+                succeeded = DeviceIoControl(volumeHandle, FsctlReadUsnJournal, ref input, Marshal.SizeOf<ReadUsnJournalData>(), buffer, buffer.Length, out bytesReturned, IntPtr.Zero);
+            }
 
-            if (!DeviceIoControl(volumeHandle, FsctlReadUsnJournal, ref input, Marshal.SizeOf<ReadUsnJournalData>(), buffer, buffer.Length, out var bytesReturned, IntPtr.Zero))
+            if (!succeeded)
             {
                 var error = Marshal.GetLastWin32Error();
                 if (error == 38)
@@ -879,6 +921,17 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
     private static extern bool DeviceIoControl(
         SafeFileHandle hDevice,
         uint dwIoControlCode,
+        ref ReadUsnJournalDataV1 lpInBuffer,
+        int nInBufferSize,
+        byte[] lpOutBuffer,
+        int nOutBufferSize,
+        out int lpBytesReturned,
+        IntPtr lpOverlapped);
+
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool DeviceIoControl(
+        SafeFileHandle hDevice,
+        uint dwIoControlCode,
         IntPtr lpInBuffer,
         int nInBufferSize,
         ref UsnJournalData lpOutBuffer,
@@ -923,6 +976,19 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
         public ulong Timeout;
         public ulong BytesToWaitFor;
         public ulong UsnJournalId;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct ReadUsnJournalDataV1
+    {
+        public long StartUsn;
+        public uint ReasonMask;
+        public uint ReturnOnlyOnClose;
+        public ulong Timeout;
+        public ulong BytesToWaitFor;
+        public ulong UsnJournalId;
+        public ushort MinMajorVersion;
+        public ushort MaxMajorVersion;
     }
 
     private enum FileIdType : uint

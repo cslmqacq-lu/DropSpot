@@ -47,6 +47,13 @@ public static class SmokeTest
                 return reliabilityResult;
             }
 
+            Console.WriteLine("[smoke] path-rules");
+            var pathRulesResult = RunPathRuleTests();
+            if (pathRulesResult != 0)
+            {
+                return pathRulesResult;
+            }
+
             Console.WriteLine("[smoke] latest-file-selector");
             var latestFileResult = RunLatestFileSelectorTests();
             if (latestFileResult != 0)
@@ -255,6 +262,73 @@ public static class SmokeTest
         {
             Directory.Delete(root, recursive: true);
         }
+    }
+
+    private static int RunPathRuleTests()
+    {
+        // 名称规则：任意层级目录名匹配
+        if (!PathRules.Matches(@"D:\code\app\node_modules\lodash", "node_modules")
+            || PathRules.Matches(@"D:\code\app\my_node_modules_backup", "node_modules"))
+        {
+            return 150;
+        }
+
+        // 通配符规则
+        if (!PathRules.Matches(@"D:\video\._jianying_export_temp_folder_178\a.mp4", "*_temp_folder_*")
+            || !PathRules.Matches(@"D:\logs\app.log", "*.log"))
+        {
+            return 151;
+        }
+
+        // 完整路径规则：只排除自身与子目录，不误伤同名前缀
+        if (!PathRules.Matches(@"G:\Temp\sub", @"G:\Temp")
+            || !PathRules.Matches(@"G:\Temp", @"G:\Temp\")
+            || PathRules.Matches(@"G:\Temporary", @"G:\Temp"))
+        {
+            return 152;
+        }
+
+        // 旧版默认规则 $Recycle.Bin 仍然有效
+        if (!PathRules.Matches(@"C:\$Recycle.Bin\S-1-5\x", "$Recycle.Bin"))
+        {
+            return 153;
+        }
+
+        if (!PathRules.ContainsCommonNoiseDirectory(@"G:\repo\.git\objects")
+            || PathRules.ContainsCommonNoiseDirectory(@"G:\repo\src"))
+        {
+            return 154;
+        }
+
+        if (!PathRules.IsTemporaryFileName("~$报告.docx")
+            || !PathRules.IsTemporaryFileName("setup.crdownload")
+            || !PathRules.IsTemporaryFileName("Thumbs.db")
+            || PathRules.IsTemporaryFileName("报告.docx"))
+        {
+            return 155;
+        }
+
+        var now = new DateTime(2026, 10, 1, 12, 0, 0);
+        if (TimeText.Relative(now.AddSeconds(-10), now) != "刚刚"
+            || TimeText.Relative(now.AddMinutes(-5), now) != "5 分钟"
+            || TimeText.Relative(now.AddHours(-3), now) != "09:00"
+            || TimeText.Clock(now.AddDays(-1), now) != "昨天 12:00"
+            || TimeText.Clock(now.AddDays(-3), now) != "09-28 12:00"
+            || TimeText.Clock(now.AddYears(-1), now) != "2025-10-01")
+        {
+            return 156;
+        }
+
+        var xml = StartupRegistration.BuildTaskXml(@"C:\Program Files\DropSpot\DropSpot.exe", @"PC\user&co");
+        if (!xml.Contains("<RunLevel>HighestAvailable</RunLevel>")
+            || !xml.Contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>")
+            || !xml.Contains("user&amp;co")
+            || !xml.StartsWith("<?xml", StringComparison.Ordinal))
+        {
+            return 157;
+        }
+
+        return 0;
     }
 
     private static int RunBufferTests()

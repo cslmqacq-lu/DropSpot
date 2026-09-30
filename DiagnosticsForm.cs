@@ -87,14 +87,7 @@ public sealed class DiagnosticsForm : Form
 
     private void CopyDiagnostics()
     {
-        try
-        {
-            Clipboard.SetText(_content.Text);
-        }
-        catch (ExternalException ex)
-        {
-            AppLog.Warning($"复制诊断失败：{ex.Message}");
-        }
+        _ = SafeClipboard.TrySetText(_content.Text, out _);
     }
 
     private static void OpenLogDirectory()

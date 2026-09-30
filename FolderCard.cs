@@ -1,5 +1,16 @@
 namespace DropSpot;
 
+/// <summary>文件行（右键菜单）可执行的操作。</summary>
+public enum FileCommand
+{
+    Open,
+    Reveal,
+    OpenWith,
+    CopyFile,
+    CopyPath,
+    CopyName
+}
+
 public sealed class FolderCard : UserControl
 {
     private readonly Action<string> _openFolder;
@@ -11,6 +22,7 @@ public sealed class FolderCard : UserControl
     private readonly Action<FolderActivity> _pinFolder;
     private readonly Func<string, bool> _isFavorite;
     private readonly Func<string, bool> _isPinned;
+    private readonly Action<ChangeRecord, FileCommand> _fileCommand;
     private readonly ContextMenuStrip _menu = new();
     private readonly ToolStripMenuItem _favoriteItem = new();
     private readonly ToolStripMenuItem _pinItem = new();
@@ -29,6 +41,8 @@ public sealed class FolderCard : UserControl
     private readonly Font _fileFont = new("Microsoft YaHei UI", 8.5F);
     private readonly Font _fileTimeFont = new("Microsoft YaHei UI", 8F);
     private readonly Font _expandFont = new("Segoe MDL2 Assets", 10F);
+    private readonly ContextMenuStrip _fileMenu = new();
+    private ChangeRecord? _fileMenuTarget;
     private FolderActivity _folder;
     private bool _isLatest;
 
@@ -45,7 +59,8 @@ public sealed class FolderCard : UserControl
         Action<FolderActivity> addFavorite,
         Func<string, bool> isFavorite,
         Action<FolderActivity> pinFolder,
-        Func<string, bool> isPinned)
+        Func<string, bool> isPinned,
+        Action<ChangeRecord, FileCommand>? fileCommand = null)
     {
         _folder = folder;
         _isLatest = isLatest;
@@ -58,6 +73,13 @@ public sealed class FolderCard : UserControl
         _isFavorite = isFavorite;
         _pinFolder = pinFolder;
         _isPinned = isPinned;
+        _fileCommand = fileCommand ?? ((record, command) =>
+        {
+            if (command == FileCommand.Open)
+            {
+                openFile(record);
+            }
+        });
 
         Margin = new Padding(0, 0, 0, 8);
         BackColor = Theme.Card;
@@ -122,6 +144,7 @@ public sealed class FolderCard : UserControl
         if (disposing)
         {
             _menu.Dispose();
+            _fileMenu.Dispose();
             _toolTip.Dispose();
             _titleFont.Dispose();
             _pathFont.Dispose();
@@ -153,6 +176,31 @@ public sealed class FolderCard : UserControl
             _pinItem.Enabled = !pinned;
         };
         ContextMenuStrip = _menu;
+
+        _fileMenu.ShowImageMargin = false;
+        AddFileMenuItem("打开", FileCommand.Open);
+        AddFileMenuItem("在文件夹中显示", FileCommand.Reveal);
+        AddFileMenuItem("打开方式…", FileCommand.OpenWith);
+        _fileMenu.Items.Add(new ToolStripSeparator());
+        AddFileMenuItem("复制文件", FileCommand.CopyFile);
+        AddFileMenuItem("复制文件路径", FileCommand.CopyPath);
+        AddFileMenuItem("复制文件名", FileCommand.CopyName);
+    }
+
+    private void AddFileMenuItem(string text, FileCommand command)
+    {
+        _fileMenu.Items.Add(text, null, (_, _) =>
+        {
+            if (_fileMenuTarget is not null)
+            {
+                _fileCommand(_fileMenuTarget, command);
+            }
+        });
+    }
+
+    private void SetFileMenuTarget(ChangeRecord record)
+    {
+        _fileMenuTarget = record;
     }
 
     private void BuildHeader()
@@ -184,7 +232,7 @@ public sealed class FolderCard : UserControl
         _metaLabel.BackColor = Theme.Card;
         _metaLabel.Font = _metaFont;
         _metaLabel.TextAlign = ContentAlignment.MiddleRight;
-        _metaLabel.Size = new Size(60, 42);
+        _metaLabel.Size = new Size(76, 42);
         _headerRow.Controls.Add(_metaLabel);
 
         _expandButton.FlatStyle = FlatStyle.Flat;
@@ -212,7 +260,7 @@ public sealed class FolderCard : UserControl
 
         for (var index = 0; index < _fileRows.Length; index++)
         {
-            var row = new FileRow(_openFile, _fileFont, _fileTimeFont)
+            var row = new FileRow(_openFile, SetFileMenuTarget, _fileMenu, _fileFont, _fileTimeFont)
             {
                 Top = 6 + index * 30
             };
@@ -235,10 +283,10 @@ public sealed class FolderCard : UserControl
     private void UpdateLayout(int width)
     {
         _filePanel.SetBounds(0, _headerRow.Height, width, Math.Max(0, Height - _headerRow.Height));
-        var textWidth = Math.Max(120, width - 198);
+        var textWidth = Math.Max(120, width - 214);
         _nameLabel.Width = textWidth;
         _pathLabel.Width = textWidth;
-        _metaLabel.Location = new Point(Math.Max(240, width - 112), 20);
+        _metaLabel.Location = new Point(Math.Max(224, width - 128), 20);
         _expandButton.Location = new Point(Math.Max(326, width - 46), 28);
 
         foreach (var row in _fileRows)
@@ -276,34 +324,29 @@ public sealed class FolderCard : UserControl
         return string.IsNullOrWhiteSpace(parentName) ? name : $"{parentName} \\ {name}";
     }
 
-    private static string RelativeTime(DateTime time)
-    {
-        var span = DateTime.Now - time;
-        if (span.TotalSeconds < 60)
-        {
-            return "刚刚";
-        }
-
-        if (span.TotalMinutes < 60)
-        {
-            return $"{Math.Max(1, (int)span.TotalMinutes)} 分钟";
-        }
-
-        return time.ToString("HH:mm");
-    }
+    private static string RelativeTime(DateTime time) => TimeText.Relative(time);
 
     private sealed class FileRow
     {
         private readonly Action<ChangeRecord> _openFile;
+        private readonly Action<ChangeRecord> _setMenuTarget;
         private readonly PictureBox _icon = new();
         private readonly Label _name = new();
         private readonly Label _time = new();
         private ChangeRecord? _record;
         private string? _iconPath;
+        private Point _mouseDownPosition;
+        private bool _dragCandidate;
 
-        public FileRow(Action<ChangeRecord> openFile, Font fileFont, Font timeFont)
+        public FileRow(
+            Action<ChangeRecord> openFile,
+            Action<ChangeRecord> setMenuTarget,
+            ContextMenuStrip fileMenu,
+            Font fileFont,
+            Font timeFont)
         {
             _openFile = openFile;
+            _setMenuTarget = setMenuTarget;
             Panel = new Panel
             {
                 Left = 72,
@@ -312,14 +355,12 @@ public sealed class FolderCard : UserControl
                 Cursor = Cursors.Hand,
                 Visible = false
             };
-            Panel.Click += OpenCurrent;
 
             _icon.BackColor = Theme.CardAlt;
             _icon.SizeMode = PictureBoxSizeMode.CenterImage;
             _icon.Location = new Point(0, 4);
             _icon.Size = new Size(18, 18);
             _icon.Cursor = Cursors.Hand;
-            _icon.Click += OpenCurrent;
             Panel.Controls.Add(_icon);
 
             _name.AutoEllipsis = true;
@@ -329,7 +370,6 @@ public sealed class FolderCard : UserControl
             _name.Location = new Point(26, 2);
             _name.Height = 21;
             _name.Cursor = Cursors.Hand;
-            _name.Click += OpenCurrent;
             Panel.Controls.Add(_name);
 
             _time.ForeColor = Theme.Muted;
@@ -337,8 +377,101 @@ public sealed class FolderCard : UserControl
             _time.Font = timeFont;
             _time.TextAlign = ContentAlignment.MiddleRight;
             _time.Height = 21;
-            _time.Click += OpenCurrent;
             Panel.Controls.Add(_time);
+
+            // 单击打开；按住拖动时以标准 FileDrop 拖出真实文件；右键弹出文件菜单。
+            foreach (var control in new Control[] { Panel, _icon, _name, _time })
+            {
+                control.ContextMenuStrip = fileMenu;
+                control.MouseDown += HandleMouseDown;
+                control.MouseMove += HandleMouseMove;
+                control.MouseUp += HandleMouseUp;
+            }
+
+            Panel.MouseEnter += (_, _) => SetHover(true);
+            Panel.MouseLeave += (_, _) =>
+            {
+                if (!Panel.ClientRectangle.Contains(Panel.PointToClient(Cursor.Position)))
+                {
+                    SetHover(false);
+                }
+            };
+            foreach (var child in new Control[] { _icon, _name, _time })
+            {
+                child.MouseEnter += (_, _) => SetHover(true);
+            }
+        }
+
+        private void SetHover(bool hover)
+        {
+            var color = hover ? Theme.Card : Theme.CardAlt;
+            Panel.BackColor = color;
+            _icon.BackColor = color;
+            _name.BackColor = color;
+            _time.BackColor = color;
+        }
+
+        private void HandleMouseDown(object? sender, MouseEventArgs e)
+        {
+            if (_record is null)
+            {
+                return;
+            }
+
+            if (e.Button == MouseButtons.Right)
+            {
+                _setMenuTarget(_record);
+                return;
+            }
+
+            if (e.Button == MouseButtons.Left)
+            {
+                _mouseDownPosition = Cursor.Position;
+                _dragCandidate = true;
+            }
+        }
+
+        private void HandleMouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!_dragCandidate || _record is null)
+            {
+                return;
+            }
+
+            if ((Control.MouseButtons & MouseButtons.Left) == 0)
+            {
+                _dragCandidate = false;
+                return;
+            }
+
+            var cursor = Cursor.Position;
+            if (Math.Abs(cursor.X - _mouseDownPosition.X) < SystemInformation.DragSize.Width
+                && Math.Abs(cursor.Y - _mouseDownPosition.Y) < SystemInformation.DragSize.Height)
+            {
+                return;
+            }
+
+            _dragCandidate = false;
+            var data = FileActions.CreateFileDropData(_record.FilePath);
+            if (data is not null)
+            {
+                Panel.DoDragDrop(data, DragDropEffects.Copy);
+            }
+        }
+
+        private void HandleMouseUp(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            var shouldOpen = _dragCandidate;
+            _dragCandidate = false;
+            if (shouldOpen && _record is not null)
+            {
+                _openFile(_record);
+            }
         }
 
         public Panel Panel { get; }
@@ -361,7 +494,7 @@ public sealed class FolderCard : UserControl
                     _iconPath = record.FilePath;
                 }
                 _name.Text = record.FileName;
-                _time.Text = record.Time.ToString("HH:mm");
+                _time.Text = TimeText.Clock(record.Time);
             }
             else
             {
@@ -375,17 +508,9 @@ public sealed class FolderCard : UserControl
         public void UpdateWidth(int cardWidth)
         {
             Panel.Width = Math.Max(180, cardWidth - 90);
-            _name.Width = Math.Max(90, cardWidth - 178);
-            _time.Location = new Point(Math.Max(130, cardWidth - 146), 2);
-            _time.Width = 46;
-        }
-
-        private void OpenCurrent(object? sender, EventArgs e)
-        {
-            if (_record is not null)
-            {
-                _openFile(_record);
-            }
+            _name.Width = Math.Max(70, cardWidth - 208);
+            _time.Location = new Point(Math.Max(100, cardWidth - 176), 2);
+            _time.Width = 76;
         }
     }
 }

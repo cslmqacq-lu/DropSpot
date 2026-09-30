@@ -17,6 +17,10 @@ public sealed class AppSettings
     public int? FloatingTop { get; set; }
     public int FloatingFavoriteCount { get; set; } = DefaultFloatingFavoriteCount;
     public bool StartWithWindows { get; set; }
+    /// <summary>过滤 .git、node_modules、浏览器缓存等常见噪音目录。</summary>
+    public bool FilterCommonNoise { get; set; } = true;
+    /// <summary>打开活跃文件夹时，在资源管理器中选中最新的文件。</summary>
+    public bool SelectLatestFileWhenOpeningFolder { get; set; } = true;
     public SavedHotKey OpenLatestFolderHotKey { get; set; } = SavedHotKey.OpenLatestFolderDefault();
     public SavedHotKey CopyLatestFolderPathHotKey { get; set; } = SavedHotKey.CopyLatestFolderPathDefault();
 

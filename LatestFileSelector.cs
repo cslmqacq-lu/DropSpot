@@ -2,10 +2,6 @@ namespace DropSpot;
 
 public static class LatestFileSelector
 {
-    private static readonly HashSet<string> TemporaryExtensions = new(
-        new[] { ".tmp", ".temp", ".part", ".crdownload", ".download" },
-        StringComparer.OrdinalIgnoreCase);
-
     public static ChangeRecord? SelectLatestExisting(
         IReadOnlyList<ChangeRecord> records,
         Func<string, bool> fileExists)
@@ -20,17 +16,9 @@ public static class LatestFileSelector
             .FirstOrDefault(record => fileExists(record.FilePath));
     }
 
+    /// <summary>与监视服务使用同一套临时文件规则（见 <see cref="PathRules.IsTemporaryFileName"/>）。</summary>
     public static bool IsTemporaryFile(string filePath)
     {
-        if (string.IsNullOrWhiteSpace(filePath))
-        {
-            return true;
-        }
-
-        var name = Path.GetFileName(filePath);
-        return name.StartsWith("~$", StringComparison.OrdinalIgnoreCase)
-            || TemporaryExtensions.Contains(Path.GetExtension(name))
-            || name.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase)
-            || name.EndsWith(".temp", StringComparison.OrdinalIgnoreCase);
+        return PathRules.IsTemporaryFileName(filePath);
     }
 }

@@ -11,7 +11,8 @@ public sealed class TrayIconController : IDisposable
         Action toggleMonitoring,
         Action openHistory,
         Action openDiagnostics,
-        Action exit)
+        Action exit,
+        Action? restartElevated = null)
     {
         var menu = new ContextMenuStrip { ShowImageMargin = false };
         menu.Items.Add("恢复主窗口", null, (_, _) => restoreMain());
@@ -21,6 +22,10 @@ public sealed class TrayIconController : IDisposable
         menu.Items.Add(_toggleMonitoringItem);
         menu.Items.Add("活动历史", null, (_, _) => openHistory());
         menu.Items.Add("诊断信息", null, (_, _) => openDiagnostics());
+        if (restartElevated is not null)
+        {
+            menu.Items.Add("以管理员身份重启", null, (_, _) => restartElevated());
+        }
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出 DropSpot", null, (_, _) => exit());
 
@@ -32,6 +37,18 @@ public sealed class TrayIconController : IDisposable
             Visible = true
         };
         _icon.DoubleClick += (_, _) => openFloating();
+        if (restartElevated is not null)
+        {
+            _icon.BalloonTipClicked += (_, _) => restartElevated();
+        }
+    }
+
+    public void ShowNotice(string title, string text)
+    {
+        _icon.BalloonTipTitle = title;
+        _icon.BalloonTipText = text;
+        _icon.BalloonTipIcon = ToolTipIcon.Warning;
+        _icon.ShowBalloonTip(8000);
     }
 
     public void UpdateMonitoring(bool monitoring, IReadOnlyList<VolumeMonitorStatus> statuses)

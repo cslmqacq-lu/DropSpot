@@ -21,6 +21,9 @@ public sealed record VolumeMonitorStatus(
 {
     public bool IsHealthy => State == VolumeMonitorState.Healthy;
 
+    /// <summary>最近一次失败是因为权限不足（通常需要以管理员身份运行）。</summary>
+    public bool AccessDenied { get; init; }
+
     public static VolumeMonitorStatus Waiting(string volumeRoot) => new(
         volumeRoot,
         VolumeMonitorState.Waiting,

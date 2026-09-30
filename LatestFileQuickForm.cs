@@ -184,7 +184,9 @@ internal sealed class LatestFileQuickForm : Form
         _menu.ForeColor = Theme.Text;
         _menu.ShowImageMargin = false;
         _menu.Items.Add("打开文件", null, (_, _) => OpenCurrent());
-        _menu.Items.Add("打开所在文件夹", null, (_, _) => OpenCurrentFolder());
+        _menu.Items.Add("在文件夹中显示", null, (_, _) => RevealCurrent());
+        _menu.Items.Add(new ToolStripSeparator());
+        _menu.Items.Add("复制文件", null, (_, _) => CopyCurrentFile());
         _menu.Items.Add("复制文件路径", null, (_, _) => CopyCurrentPath());
 
         _surface.ContextMenuStrip = _menu;
@@ -268,11 +270,36 @@ internal sealed class LatestFileQuickForm : Form
         }
     }
 
-    private void OpenCurrentFolder()
+    private async void RevealCurrent()
     {
-        if (_record is not null)
+        var record = _record;
+        if (record is null)
         {
-            _openFolder(_record.FolderPath);
+            return;
+        }
+
+        bool revealed;
+        try
+        {
+            revealed = await Task.Run(() => FileActions.TryRevealInExplorer(record.FilePath));
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException)
+        {
+            AppLog.Warning($"在文件夹中显示失败：{ex.Message}");
+            revealed = false;
+        }
+
+        if (!revealed && !IsDisposed)
+        {
+            _openFolder(record.FolderPath);
+        }
+    }
+
+    private void CopyCurrentFile()
+    {
+        if (_record is not null && File.Exists(_record.FilePath))
+        {
+            _ = SafeClipboard.TrySetFiles(new[] { _record.FilePath }, out _);
         }
     }
 

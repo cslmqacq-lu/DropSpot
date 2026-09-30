@@ -34,15 +34,33 @@ static class Program
             return;
         }
 
-        using var instance = new SingleInstanceCoordinator();
+        var startMinimized = args.Any(arg =>
+            string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
+        var waitForPrevious = args.Any(arg =>
+            string.Equals(arg, Elevation.WaitPreviousArgument, StringComparison.OrdinalIgnoreCase));
+
+        using var instance = AcquireInstance(waitForPrevious);
         if (!instance.IsFirstInstance)
         {
+            if (instance.OtherInstanceIsElevated)
+            {
+                // 普通权限无法唤醒管理员实例；开机自启重复启动时静默退出，手动启动时给出提示。
+                if (!startMinimized)
+                {
+                    MessageBox.Show(
+                        "DropSpot 已经以管理员身份在运行，请通过系统托盘图标或悬浮窗打开。",
+                        "DropSpot",
+                        MessageBoxButtons.OK,
+                        MessageBoxIcon.Information);
+                }
+
+                return;
+            }
+
             instance.SignalActivation();
             return;
         }
 
-        var startMinimized = args.Any(arg =>
-            string.Equals(arg, "--startup", StringComparison.OrdinalIgnoreCase));
         using var mainForm = new MainForm(startMinimized);
         instance.StartListening(() =>
         {
@@ -53,5 +71,24 @@ static class Program
         });
         Application.Run(mainForm);
         AppLog.Info("DropSpot 正常退出");
+    }
+
+    /// <summary>
+    /// 获取单实例锁。以管理员身份重启时，旧进程可能还没完全退出，这里最多等待 10 秒。
+    /// </summary>
+    private static SingleInstanceCoordinator AcquireInstance(bool waitForPrevious)
+    {
+        var deadline = DateTime.UtcNow + (waitForPrevious ? TimeSpan.FromSeconds(10) : TimeSpan.Zero);
+        while (true)
+        {
+            var instance = new SingleInstanceCoordinator();
+            if (instance.IsFirstInstance || DateTime.UtcNow >= deadline)
+            {
+                return instance;
+            }
+
+            instance.Dispose();
+            Thread.Sleep(250);
+        }
     }
 }

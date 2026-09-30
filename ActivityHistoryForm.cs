@@ -116,7 +116,7 @@ public sealed class ActivityHistoryForm : Form
     {
         if (_list.SelectedItems.Count == 1 && _list.SelectedItems[0].Tag is string path)
         {
-            Clipboard.SetText(path);
+            _ = SafeClipboard.TrySetText(path, out _);
         }
     }
 }

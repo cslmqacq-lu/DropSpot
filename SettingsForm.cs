@@ -6,6 +6,8 @@ public sealed class SettingsForm : Form
     private readonly ListBox _excludeList = new();
     private readonly NumericUpDown _floatingFavoriteCount = new();
     private readonly CheckBox _startWithWindows = new();
+    private readonly CheckBox _selectLatestFile = new();
+    private readonly CheckBox _filterCommonNoise = new();
     private readonly HotKeyEditor _openLatestHotKey = new();
     private readonly HotKeyEditor _copyLatestPathHotKey = new();
     private readonly Label _hotKeyError = new();
@@ -20,8 +22,12 @@ public sealed class SettingsForm : Form
         bool startWithWindows,
         Action? openDiagnostics = null,
         SavedHotKey? openLatestFolderHotKey = null,
-        SavedHotKey? copyLatestFolderPathHotKey = null)
+        SavedHotKey? copyLatestFolderPathHotKey = null,
+        bool filterCommonNoise = true,
+        bool selectLatestFileWhenOpeningFolder = true)
     {
+        _filterCommonNoise.Checked = filterCommonNoise;
+        _selectLatestFile.Checked = selectLatestFileWhenOpeningFolder;
         _watchScopes = watchScopes.Select(scope => new WatchScope(scope.Path, scope.Enabled)).ToList();
         _excludedPaths = excludedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         _floatingFavoriteCount.Value = AppSettings.NormalizeFloatingFavoriteCount(floatingFavoriteCount);
@@ -52,6 +58,8 @@ public sealed class SettingsForm : Form
     public IReadOnlyList<string> ExcludedPaths => _excludedPaths;
     public int FloatingFavoriteCount => (int)_floatingFavoriteCount.Value;
     public bool StartWithWindows => _startWithWindows.Checked;
+    public bool FilterCommonNoise => _filterCommonNoise.Checked;
+    public bool SelectLatestFileWhenOpeningFolder => _selectLatestFile.Checked;
     public SavedHotKey OpenLatestFolderHotKey => _openLatestHotKey.Value;
     public SavedHotKey CopyLatestFolderPathHotKey => _copyLatestPathHotKey.Value;
 
@@ -180,14 +188,17 @@ public sealed class SettingsForm : Form
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 82,
-            RowCount = 2,
+            Height = 190,
+            RowCount = 5,
             ColumnCount = 1,
             Padding = new Padding(8, 12, 8, 0),
             BackColor = Theme.Window
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 12F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34F));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 48F));
         page.Controls.Add(root);
 
         _startWithWindows.Text = "随 Windows 启动";
@@ -199,11 +210,28 @@ public sealed class SettingsForm : Form
 
         root.Controls.Add(new Label
         {
-            Text = "登录后自动开始监视，并进入浮窗。",
+            Text = Elevation.IsElevated
+                ? "登录后以管理员身份自动开始监视，并进入浮窗。"
+                : "登录后自动开始监视并进入浮窗。监视磁盘需要管理员权限，以管理员身份运行一次后会自动改为管理员开机启动。",
             Dock = DockStyle.Fill,
             ForeColor = Theme.Muted,
-            TextAlign = ContentAlignment.MiddleLeft
+            TextAlign = ContentAlignment.TopLeft
         }, 0, 1);
+
+        _selectLatestFile.Text = "打开文件夹时选中最新文件";
+        _selectLatestFile.Dock = DockStyle.Fill;
+        _selectLatestFile.ForeColor = Theme.Text;
+        _selectLatestFile.BackColor = Theme.Window;
+        _selectLatestFile.AutoSize = false;
+        root.Controls.Add(_selectLatestFile, 0, 3);
+
+        root.Controls.Add(new Label
+        {
+            Text = "双击活跃文件夹、快捷键打开最新文件夹时，资源管理器会直接定位到刚写入的文件。",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.TopLeft
+        }, 0, 4);
     }
 
     private void BuildDrivePage(Control page)
@@ -239,18 +267,38 @@ public sealed class SettingsForm : Form
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            RowCount = 2,
+            RowCount = 4,
             BackColor = Theme.Window
         };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         page.Controls.Add(root);
+
+        _filterCommonNoise.Text = "过滤常见噪音目录";
+        _filterCommonNoise.Dock = DockStyle.Fill;
+        _filterCommonNoise.ForeColor = Theme.Text;
+        _filterCommonNoise.BackColor = Theme.Window;
+        _filterCommonNoise.AutoSize = false;
+        root.Controls.Add(_filterCommonNoise, 0, 0);
+        var noiseTip = new ToolTip();
+        noiseTip.SetToolTip(_filterCommonNoise, string.Join("  ", PathRules.CommonNoiseDirectoryNames));
+        Disposed += (_, _) => noiseTip.Dispose();
+
+        root.Controls.Add(new Label
+        {
+            Text = "列表支持完整路径，也支持名称或通配符（如 node_modules、*_temp_*），任意层级匹配即排除。",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.TopLeft
+        }, 0, 1);
 
         _excludeList.Dock = DockStyle.Fill;
         _excludeList.BackColor = Theme.Panel;
         _excludeList.ForeColor = Theme.Text;
         _excludeList.BorderStyle = BorderStyle.FixedSingle;
-        root.Controls.Add(_excludeList, 0, 0);
+        root.Controls.Add(_excludeList, 0, 2);
 
         var buttons = new FlowLayoutPanel
         {
@@ -259,11 +307,17 @@ public sealed class SettingsForm : Form
             WrapContents = false,
             BackColor = Theme.Window
         };
-        root.Controls.Add(buttons, 0, 1);
+        root.Controls.Add(buttons, 0, 3);
 
-        var addButton = CreateButton("添加", primary: false);
+        var addButton = CreateButton("添加文件夹", primary: false);
+        addButton.Width = 92;
         addButton.Click += (_, _) => AddExcludeFolder();
         buttons.Controls.Add(addButton);
+
+        var addNameButton = CreateButton("按名称添加", primary: false);
+        addNameButton.Width = 92;
+        addNameButton.Click += (_, _) => AddExcludeNameRule();
+        buttons.Controls.Add(addNameButton);
 
         var removeButton = CreateButton("移除", primary: false);
         removeButton.Click += (_, _) => RemoveSelectedExclusion();
@@ -533,6 +587,25 @@ public sealed class SettingsForm : Form
         _excludeList.Items.Add(dialog.SelectedPath);
     }
 
+    private void AddExcludeNameRule()
+    {
+        using var dialog = new NameRuleInputForm();
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        var rule = PathRules.NormalizeRule(dialog.Rule);
+        if (string.IsNullOrWhiteSpace(rule)
+            || _excludeList.Items.Cast<object>().Any(item =>
+                string.Equals(item.ToString(), rule, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        _excludeList.Items.Add(rule);
+    }
+
     private void RemoveSelectedExclusion()
     {
         var selected = _excludeList.SelectedItems.Cast<object>().ToArray();
@@ -676,4 +749,77 @@ public sealed class SettingsForm : Form
             return $"{Scope.Path}  {label}  {FileSystem}  ({DriveType}){support}";
         }
     }
+}
+
+internal sealed class NameRuleInputForm : Form
+{
+    private readonly TextBox _input = new();
+
+    public NameRuleInputForm()
+    {
+        Text = "按名称排除";
+        FormBorderStyle = FormBorderStyle.FixedDialog;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        ShowInTaskbar = false;
+        StartPosition = FormStartPosition.CenterParent;
+        ClientSize = new Size(380, 150);
+        BackColor = Theme.Window;
+        ForeColor = Theme.Text;
+        Font = new Font("Microsoft YaHei UI", 9F);
+
+        var hint = new Label
+        {
+            Text = "输入文件夹名称或通配符，例如：node_modules、.cache、*_temp_*\r\n路径中任意一级目录名匹配就会被排除。",
+            Location = new Point(14, 12),
+            Size = new Size(352, 42),
+            ForeColor = Theme.Muted
+        };
+        Controls.Add(hint);
+
+        _input.Location = new Point(14, 62);
+        _input.Size = new Size(352, 26);
+        _input.BackColor = Theme.Panel;
+        _input.ForeColor = Theme.Text;
+        _input.BorderStyle = BorderStyle.FixedSingle;
+        Controls.Add(_input);
+
+        var ok = new Button
+        {
+            Text = "添加",
+            DialogResult = DialogResult.OK,
+            Location = new Point(206, 106),
+            Size = new Size(76, 28),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Theme.AccentDark,
+            ForeColor = Color.White
+        };
+        ok.FlatAppearance.BorderColor = Theme.AccentDark;
+        ok.Click += (_, _) =>
+        {
+            if (string.IsNullOrWhiteSpace(_input.Text))
+            {
+                DialogResult = DialogResult.None;
+            }
+        };
+        Controls.Add(ok);
+
+        var cancel = new Button
+        {
+            Text = "取消",
+            DialogResult = DialogResult.Cancel,
+            Location = new Point(290, 106),
+            Size = new Size(76, 28),
+            FlatStyle = FlatStyle.Flat,
+            BackColor = Theme.Panel,
+            ForeColor = Theme.Text
+        };
+        cancel.FlatAppearance.BorderColor = Theme.Border;
+        Controls.Add(cancel);
+
+        AcceptButton = ok;
+        CancelButton = cancel;
+    }
+
+    public string Rule => _input.Text.Trim();
 }
