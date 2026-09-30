@@ -38,4 +38,17 @@ public sealed class FolderActivity
             _files.RemoveRange(MaxRecentFiles, _files.Count - MaxRecentFiles);
         }
     }
+
+    public static FolderActivity Restore(
+        string folderPath,
+        DateTime lastTime,
+        int changeCount,
+        IEnumerable<ChangeRecord> records)
+    {
+        var activity = new FolderActivity(folderPath);
+        activity._files.AddRange(records.OrderByDescending(record => record.Time).Take(MaxRecentFiles));
+        activity.LastTime = lastTime;
+        activity.ChangeCount = Math.Max(changeCount, activity._files.Count);
+        return activity;
+    }
 }

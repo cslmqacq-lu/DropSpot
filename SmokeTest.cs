@@ -40,6 +40,20 @@ public static class SmokeTest
                 return bufferResult;
             }
 
+            Console.WriteLine("[smoke] reliability-state");
+            var reliabilityResult = RunReliabilityStateTests();
+            if (reliabilityResult != 0)
+            {
+                return reliabilityResult;
+            }
+
+            Console.WriteLine("[smoke] latest-file-selector");
+            var latestFileResult = RunLatestFileSelectorTests();
+            if (latestFileResult != 0)
+            {
+                return latestFileResult;
+            }
+
             Console.WriteLine("[smoke] single-instance");
             var singleInstanceResult = RunSingleInstanceTests();
             if (singleInstanceResult != 0)
@@ -59,6 +73,20 @@ public static class SmokeTest
             if (favoriteResult != 0)
             {
                 return favoriteResult;
+            }
+
+            Console.WriteLine("[smoke] pinned-folders");
+            var pinnedResult = RunPinnedFolderTests();
+            if (pinnedResult != 0)
+            {
+                return pinnedResult;
+            }
+
+            Console.WriteLine("[smoke] window-presentation");
+            var windowPresentationResult = RunWindowPresentationTests();
+            if (windowPresentationResult != 0)
+            {
+                return windowPresentationResult;
             }
 
             Console.WriteLine("[smoke] ui-resources");
@@ -94,7 +122,27 @@ public static class SmokeTest
         using var monitor = new FileMonitorService();
         var records = new ConcurrentBag<ChangeRecord>();
         monitor.Changed += (_, record) => records.Add(record);
-        monitor.Start(new[] { new WatchScope(tempRoot) });
+        var missingRoot = Enumerable.Range('D', 'Z' - 'D' + 1)
+            .Select(letter => $"{(char)letter}:\\")
+            .FirstOrDefault(root => !Directory.Exists(root));
+        var scopes = missingRoot is null
+            ? new[] { new WatchScope(tempRoot) }
+            : new[] { new WatchScope(tempRoot), new WatchScope(Path.Combine(missingRoot, "DropSpotMissing")) };
+        monitor.Start(scopes);
+        if (!SpinWait.SpinUntil(
+                () => monitor.VolumeStatuses.Any(status => status.State == VolumeMonitorState.Healthy),
+                TimeSpan.FromSeconds(8)))
+        {
+            return 7;
+        }
+        if (missingRoot is not null
+            && !SpinWait.SpinUntil(
+                () => monitor.VolumeStatuses.Count == 2
+                    && monitor.VolumeStatuses.Any(status => status.VolumeRoot == missingRoot && status.State != VolumeMonitorState.Healthy),
+                TimeSpan.FromSeconds(4)))
+        {
+            return 9;
+        }
 
         var filePath = Path.Combine(tempRoot, "probe.txt");
         File.WriteAllText(filePath, "created");
@@ -134,7 +182,13 @@ public static class SmokeTest
         var stoppedFile = Path.Combine(tempRoot, "while-stopped.txt");
         File.WriteAllText(stoppedFile, "offline");
         monitor.Start(new[] { new WatchScope(tempRoot) });
-        Thread.Sleep(1200);
+        if (!SpinWait.SpinUntil(
+                () => monitor.VolumeStatuses.Any(status => status.State == VolumeMonitorState.Healthy),
+                TimeSpan.FromSeconds(8)))
+        {
+            return 8;
+        }
+        Thread.Sleep(500);
         if (CountFor(records, stoppedFile) != 0)
         {
             return 5;
@@ -164,7 +218,43 @@ public static class SmokeTest
         }
 
         var command = StartupRegistration.BuildCommand(@"C:\Program Files\DropSpot\DropSpot.exe");
-        return command == "\"C:\\Program Files\\DropSpot\\DropSpot.exe\" --startup" ? 0 : 62;
+        if (command != "\"C:\\Program Files\\DropSpot\\DropSpot.exe\" --startup")
+        {
+            return 62;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), "DropSpotStartupSmoke-" + Guid.NewGuid().ToString("N"));
+        var stablePath = Path.Combine(root, "portable", "DropSpot.exe");
+        var installedPath = Path.Combine(root, "installed", "DropSpot.exe");
+        var developmentPath = Path.Combine(root, "repo", "bin", "Debug", "net8.0-windows", "DropSpot.exe");
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(stablePath)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(installedPath)!);
+            File.WriteAllText(stablePath, string.Empty);
+            File.WriteAllText(installedPath, string.Empty);
+
+            var preserved = StartupRegistration.ResolveStartupExecutable(
+                developmentPath,
+                StartupRegistration.BuildCommand(stablePath),
+                installedPath);
+            if (!StartupRegistration.IsDevelopmentExecutable(developmentPath)
+                || !string.Equals(preserved, stablePath, StringComparison.OrdinalIgnoreCase))
+            {
+                return 63;
+            }
+
+            File.Delete(stablePath);
+            var fallback = StartupRegistration.ResolveStartupExecutable(
+                developmentPath,
+                StartupRegistration.BuildCommand(stablePath),
+                installedPath);
+            return string.Equals(fallback, installedPath, StringComparison.OrdinalIgnoreCase) ? 0 : 64;
+        }
+        finally
+        {
+            Directory.Delete(root, recursive: true);
+        }
     }
 
     private static int RunBufferTests()
@@ -196,6 +286,40 @@ public static class SmokeTest
         return merged.Count == 1 && merged[0].Time == start.AddSeconds(1) ? 0 : 22;
     }
 
+    private static int RunLatestFileSelectorTests()
+    {
+        var now = DateTime.UtcNow;
+        var records = new[]
+        {
+            CreateRecord(@"C:\work\render.tmp", now.AddSeconds(4)),
+            CreateRecord(@"C:\work\download.part", now.AddSeconds(3)),
+            CreateRecord(@"C:\work\~$brief.docx", now.AddSeconds(2)),
+            CreateRecord(@"C:\work\final.png", now.AddSeconds(1)),
+            CreateRecord(@"C:\work\older.jpg", now)
+        };
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        {
+            @"C:\work\final.png",
+            @"C:\work\older.jpg"
+        };
+
+        var selected = LatestFileSelector.SelectLatestExisting(records, existing.Contains);
+        if (selected?.FilePath != @"C:\work\final.png")
+        {
+            return 71;
+        }
+
+        existing.Remove(@"C:\work\final.png");
+        selected = LatestFileSelector.SelectLatestExisting(records, existing.Contains);
+        if (selected?.FilePath != @"C:\work\older.jpg")
+        {
+            return 72;
+        }
+
+        existing.Clear();
+        return LatestFileSelector.SelectLatestExisting(records, existing.Contains) is null ? 0 : 73;
+    }
+
     private static int RunSettingsTests(string tempRoot)
     {
         var settingsPath = Path.Combine(tempRoot, "settings.json");
@@ -215,11 +339,41 @@ public static class SmokeTest
                     LastActivity = new DateTime(2026, 2, 1)
                 }
             },
+            PinnedFolders = new List<SavedPinnedFolder>
+            {
+                new()
+                {
+                    Path = @"C:\Projects\Inbox",
+                    Left = 180,
+                    Top = 240,
+                    PinnedAt = new DateTime(2026, 3, 1),
+                    LastActivity = new DateTime(2026, 3, 2),
+                    LastOpenedAt = new DateTime(2026, 3, 1, 12, 0, 0)
+                }
+            },
+            ActivityHistory = new List<SavedActivityFolder>
+            {
+                new()
+                {
+                    FolderPath = @"C:\Projects\Recent",
+                    LastTime = new DateTime(2026, 3, 3),
+                    ChangeCount = 4,
+                    Files = new List<SavedActivityFile>
+                    {
+                        new()
+                        {
+                            Time = new DateTime(2026, 3, 3),
+                            ChangeKind = "更新",
+                            FilePath = @"C:\Projects\Recent\image.png",
+                            ScopePath = @"C:\",
+                            FileName = "image.png"
+                        }
+                    }
+                }
+            },
             FloatingLeft = 123,
             FloatingTop = 456,
             FloatingFavoriteCount = 8,
-            FloatingBackgroundArgb = Color.FromArgb(32, 64, 96).ToArgb(),
-            FloatingOpacityPercent = 55,
             StartWithWindows = true
         };
         original.SaveTo(settingsPath);
@@ -240,17 +394,21 @@ public static class SmokeTest
             || recovered.WatchScopes[0].Path != @"C:\"
             || recovered.FavoriteFolders.Count != 1
             || recovered.FavoriteFolders[0].Path != @"C:\Projects"
+            || recovered.PinnedFolders.Count != 1
+            || recovered.PinnedFolders[0].Path != @"C:\Projects\Inbox"
+            || recovered.PinnedFolders[0].Left != 180
+            || recovered.PinnedFolders[0].Top != 240
+            || recovered.PinnedFolders[0].LastActivity != new DateTime(2026, 3, 2)
+            || recovered.ActivityHistory.Count != 1
+            || recovered.ActivityHistory[0].Files.Count != 1
+            || recovered.OpenLatestFolderHotKey.DisplayText() != "Ctrl+Alt+F"
+            || recovered.CopyLatestFolderPathHotKey.DisplayText() != "Ctrl+Alt+D"
             || recovered.FloatingLeft != 123
             || recovered.FloatingTop != 456
             || recovered.FloatingFavoriteCount != 8
-            || recovered.FloatingBackgroundArgb != Color.FromArgb(32, 64, 96).ToArgb()
-            || recovered.FloatingOpacityPercent != 55
             || !recovered.StartWithWindows
             || AppSettings.NormalizeFloatingFavoriteCount(0) != 1
-            || AppSettings.NormalizeFloatingFavoriteCount(99) != 14
-            || AppSettings.NormalizeFloatingOpacityPercent(0) != 20
-            || AppSettings.NormalizeFloatingOpacityPercent(120) != 100
-            || AppSettings.GetFloatingBackgroundColor(Color.Fuchsia.ToArgb()).ToArgb() == Color.Fuchsia.ToArgb())
+            || AppSettings.NormalizeFloatingFavoriteCount(99) != 14)
         {
             return 30;
         }
@@ -276,6 +434,7 @@ public static class SmokeTest
         if (warning is not null
             || migrated.FavoriteFolders.Count != 1
             || migrated.FavoriteFolders[0].Path != @"C:\Projects"
+            || migrated.PinnedFolders.Count != 1
             || migrated.FloatingFavoriteCount != 8)
         {
             return 33;
@@ -295,11 +454,104 @@ public static class SmokeTest
         }
 
         migrated = AppSettings.LoadFrom(currentPath, out warning);
+        if (warning is not null
+            || migrated.WatchScopes.Count != 1
+            || migrated.WatchScopes[0].Path != @"C:\")
+        {
+            return 35;
+        }
+
+        var legacyJsonPath = Path.Combine(tempRoot, "legacy-hotkeys.json");
+        File.WriteAllText(legacyJsonPath, "{\"WatchScopes\":[]}");
+        var legacyDefaults = AppSettings.LoadFrom(legacyJsonPath, out warning);
         return warning is null
-            && migrated.WatchScopes.Count == 1
-            && migrated.WatchScopes[0].Path == @"C:\"
+            && legacyDefaults.OpenLatestFolderHotKey.DisplayText() == "Ctrl+Alt+F"
+            && legacyDefaults.CopyLatestFolderPathHotKey.DisplayText() == "Ctrl+Alt+D"
             ? 0
-            : 35;
+            : 36;
+    }
+
+    private static int RunReliabilityStateTests()
+    {
+        if (UsnJournalVolumeWatcher.RetryDelay(1) != TimeSpan.FromSeconds(2)
+            || UsnJournalVolumeWatcher.RetryDelay(4) != TimeSpan.FromSeconds(8)
+            || UsnJournalVolumeWatcher.RetryDelay(99) != TimeSpan.FromSeconds(30))
+        {
+            return 81;
+        }
+
+        var status = new VolumeMonitorStatus(
+            @"G:\",
+            VolumeMonitorState.Reconnecting,
+            "磁盘尚未就绪",
+            3,
+            new DateTime(2026, 8, 29, 10, 0, 0),
+            new DateTime(2026, 8, 29, 10, 1, 0),
+            new DateTime(2026, 8, 29, 10, 2, 0));
+        var diagnostic = new DiagnosticsSnapshot(
+            "1.0.7",
+            new DateTime(2026, 8, 29, 10, 3, 0),
+            new[] { status },
+            new[] { "sample log" },
+            @"C:\logs").Format();
+        var openBinding = SavedHotKey.OpenLatestFolderDefault();
+        var copyBinding = SavedHotKey.CopyLatestFolderPathDefault();
+        var invalidBinding = new SavedHotKey { Key = "Q" };
+        var invalidLetter = new SavedHotKey { Ctrl = true, Key = "1" };
+        var opened = 0;
+        var copied = 0;
+        using var hotKeys = new GlobalHotKeyManager(
+            IntPtr.Zero,
+            openBinding,
+            copyBinding,
+            () => opened++,
+            () => copied++);
+        _ = hotKeys.ProcessMessage(GlobalHotKeyManager.HotKeyMessage, new IntPtr(GlobalHotKeyManager.OpenLatestFolderId));
+        _ = hotKeys.ProcessMessage(GlobalHotKeyManager.HotKeyMessage, new IntPtr(GlobalHotKeyManager.CopyLatestFolderPathId));
+        if (!diagnostic.Contains(@"G:\  重连中", StringComparison.Ordinal)
+            || !diagnostic.Contains("重试：3", StringComparison.Ordinal)
+            || GlobalHotKeyManager.CopyLatestFolderPathId == GlobalHotKeyManager.OpenLatestFolderId
+            || openBinding.DisplayText() != "Ctrl+Alt+F"
+            || copyBinding.DisplayText() != "Ctrl+Alt+D"
+            || !openBinding.TryValidate(out _)
+            || invalidBinding.TryValidate(out _)
+            || invalidLetter.TryValidate(out _)
+            || openBinding.SameCombination(copyBinding)
+            || opened != 1
+            || copied != 1)
+        {
+            return 82;
+        }
+
+        var history = new ActivityHistoryStore();
+        for (var folderIndex = 0; folderIndex < 60; folderIndex++)
+        {
+            for (var fileIndex = 0; fileIndex < 5; fileIndex++)
+            {
+                var folder = $@"C:\history\folder-{folderIndex:00}";
+                history.Add(new ChangeRecord
+                {
+                    Time = new DateTime(2026, 8, 29, 11, 0, 0).AddSeconds(folderIndex * 10 + fileIndex),
+                    ChangeKind = "更新",
+                    FolderPath = folder,
+                    FilePath = Path.Combine(folder, $"file-{fileIndex}.txt"),
+                    ScopePath = @"C:\",
+                    FileName = $"file-{fileIndex}.txt"
+                });
+            }
+        }
+
+        var saved = history.ToSettings();
+        var restored = new ActivityHistoryStore();
+        restored.Load(saved.Concat(new[] { new SavedActivityFolder { FolderPath = "::invalid::", LastTime = DateTime.Now } }));
+        if (saved.Count != ActivityHistoryStore.MaxFolders
+            || saved.Any(item => item.Files.Count > ActivityHistoryStore.MaxFilesPerFolder)
+            || restored.Items.Count != ActivityHistoryStore.MaxFolders)
+        {
+            return 83;
+        }
+
+        return 0;
     }
 
     private static int RunPlacementTests()
@@ -354,15 +606,121 @@ public static class SmokeTest
         return 0;
     }
 
+    private static int RunPinnedFolderTests()
+    {
+        var store = new PinnedFolderStore();
+        var created = new DateTime(2026, 8, 11, 9, 0, 0);
+        store.Load(new[]
+        {
+            new SavedPinnedFolder
+            {
+                Path = @"C:\pins\alpha",
+                Left = 120,
+                Top = 240,
+                PinnedAt = created
+            },
+            new SavedPinnedFolder
+            {
+                Path = @"c:\PINS\ALPHA\",
+                Left = 1,
+                Top = 2,
+                PinnedAt = created.AddMinutes(1)
+            }
+        });
+
+        if (store.Count != 1
+            || !store.Contains(@"C:\pins\alpha")
+            || store.Items[0].Position != new Point(120, 240)
+            || store.Pin(@"C:\pins\alpha"))
+        {
+            return 74;
+        }
+
+        if (!store.Pin(@"C:\pins\beta", new Point(360, 480))
+            || !store.UpdatePosition(@"C:\pins\beta", new Point(400, 500))
+            || store.UpdatePosition(@"C:\pins\beta", new Point(400, 500)))
+        {
+            return 75;
+        }
+
+        var activityTime = DateTime.Now.AddSeconds(1);
+        if (!store.MarkActivity(@"C:\pins\beta\child", activityTime)
+            || !store.Items.Single(item => item.Path == @"C:\pins\beta").HasUnreadActivity
+            || !store.MarkOpened(@"C:\pins\beta", activityTime.AddSeconds(1))
+            || store.Items.Single(item => item.Path == @"C:\pins\beta").HasUnreadActivity)
+        {
+            return 79;
+        }
+
+        var saved = store.ToSettings();
+        if (saved.Count != 2
+            || saved.Single(item => item.Path == @"C:\pins\beta").Left != 400
+            || saved.Single(item => item.Path == @"C:\pins\beta").Top != 500
+            || !store.Remove(@"C:\pins\alpha")
+            || store.Contains(@"C:\pins\alpha"))
+        {
+            return 76;
+        }
+
+        return 0;
+    }
+
+    private static int RunWindowPresentationTests()
+    {
+        const int wmSysCommand = 0x0112;
+        const int scRestore = 0xF120;
+        const int scMinimize = 0xF020;
+        if (MainForm.ShouldSuspendMainRendering(
+                floatingModeActive: false,
+                FormWindowState.Normal)
+            || !MainForm.ShouldSuspendMainRendering(
+                floatingModeActive: false,
+                FormWindowState.Minimized)
+            || !MainForm.ShouldSuspendMainRendering(
+                floatingModeActive: true,
+                FormWindowState.Normal)
+            || !MainForm.ShouldRestoreFloatingMode(
+                restoreFloatingAfterTaskbarMinimize: true,
+                wmSysCommand,
+                new IntPtr(scRestore))
+            || MainForm.ShouldRestoreFloatingMode(
+                restoreFloatingAfterTaskbarMinimize: false,
+                wmSysCommand,
+                new IntPtr(scRestore))
+            || MainForm.ShouldRestoreFloatingMode(
+                restoreFloatingAfterTaskbarMinimize: true,
+                wmSysCommand,
+                new IntPtr(scMinimize))
+            || MainForm.ShouldRestoreFloatingMode(
+                restoreFloatingAfterTaskbarMinimize: true,
+                message: 0x0005,
+                new IntPtr(scRestore)))
+        {
+            return 77;
+        }
+
+        const System.Reflection.BindingFlags privateInstance =
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
+        return typeof(MainForm).GetMethod("EnterFloatingMode", privateInstance) is not null
+            && typeof(MainForm).GetField("_openFloatingButton", privateInstance) is not null
+            ? 0
+            : 78;
+    }
+
     private static int RunUiResourceTests()
     {
         var cards = new List<FolderCard>();
         var favoriteCards = new List<FavoriteFolderCard>();
         FloatingFolderForm? floating = null;
+        PinnedFolderForm? pinnedFolder = null;
+        LatestFileQuickForm? latestFileQuick = null;
         FavoriteQuickMenuForm? quickMenu = null;
         FavoriteInfoPopupForm? infoPopup = null;
         SettingsForm? settingsForm = null;
         ContextMenuStrip? contextMenu = null;
+        var latestFolderOpenCount = 0;
+        var pinnedFolderOpenCount = 0;
+        var floatingMinimizeCount = 0;
         try
         {
             for (var index = 0; index < 6; index++)
@@ -380,6 +738,8 @@ public static class SmokeTest
                     _ => { },
                     _ => { },
                     _ => { },
+                    _ => false,
+                    _ => { },
                     _ => false);
                 card.CreateControl();
                 cards.Add(card);
@@ -394,24 +754,124 @@ public static class SmokeTest
             }
 
             floating = new FloatingFolderForm(
-                () => { },
-                _ => { },
-                () => { },
-                () => { },
-                () => { },
+                () => latestFolderOpenCount++,
                 _ => { },
                 _ => { },
+                () => { },
+                () => floatingMinimizeCount++,
+                () => { },
+                () => { },
                 _ => { },
-                () => true);
+                _ => { },
+                _ => { },
+                _ => { },
+                () => true,
+                _ => false);
             floating.CreateControl();
-            var appearanceColor = Color.FromArgb(230, 235, 240);
-            floating.ApplyAppearance(appearanceColor, 20);
+            var minimizeItem = floating.ContextMenuStrip?.Items
+                .OfType<ToolStripMenuItem>()
+                .SingleOrDefault(item => item.Text == "最小化到任务栏");
+            minimizeItem?.PerformClick();
+            if (floating.LatestFileCount != 0
+                || minimizeItem is null
+                || floatingMinimizeCount != 1)
+            {
+                return 87;
+            }
+
             floating.UpdateFavorites(Enumerable.Range(0, 14)
                 .Select(index => new FavoriteFolder(
                     $@"C:\favorites\folder-{index}",
                     DateTime.Now,
                     DateTime.Now))
                 .ToArray());
+
+            var interactionFolder = new FolderActivity(@"C:\activity\latest");
+            var interactionRecord = CreateRecord(@"C:\activity\latest\final.png", DateTime.Now);
+            interactionFolder.Add(interactionRecord);
+            floating.UpdateLatest(interactionFolder, interactionRecord, monitoring: true);
+            floating.ShowAt(Screen.PrimaryScreen?.WorkingArea.Location);
+            var toggleLatest = typeof(FloatingFolderForm).GetMethod(
+                "ToggleLatestFileCard",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            var activeDoubleClick = typeof(FloatingFolderForm).GetMethod(
+                "HandleActiveDoubleClick",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            if (toggleLatest is null || activeDoubleClick is null)
+            {
+                return 88;
+            }
+
+            toggleLatest.Invoke(floating, null);
+            if (!floating.LatestFileCardVisible)
+            {
+                return 89;
+            }
+
+            activeDoubleClick.Invoke(
+                floating,
+                new object?[] { floating, new MouseEventArgs(MouseButtons.Left, 2, 0, 0, 0) });
+            if (latestFolderOpenCount != 1 || floating.LatestFileCardVisible)
+            {
+                return 91;
+            }
+
+            var showFavoriteInfo = typeof(FloatingFolderForm).GetMethod(
+                "ShowFavoriteInfo",
+                System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic);
+            if (showFavoriteInfo is null)
+            {
+                return 92;
+            }
+
+            var distantAnchor = new Rectangle(Cursor.Position.X + 1000, Cursor.Position.Y + 1000, 1, 1);
+            showFavoriteInfo.Invoke(floating, new object?[]
+            {
+                new FavoriteFolder(@"C:\favorites\watchdog", DateTime.Now, DateTime.Now),
+                distantAnchor
+            });
+            var dismissDeadline = DateTime.UtcNow.AddMilliseconds(400);
+            while (DateTime.UtcNow < dismissDeadline && floating.FavoriteInfoVisible)
+            {
+                Application.DoEvents();
+                Thread.Sleep(20);
+            }
+
+            floating.Hide();
+            if (floating.FavoriteInfoVisible || floating.LatestFileCardVisible)
+            {
+                return 93;
+            }
+
+            latestFileQuick = new LatestFileQuickForm(_ => { }, _ => { }, _ => { });
+            latestFileQuick.UpdateFile(CreateRecord(@"C:\activity\latest\final.png", DateTime.Now));
+            latestFileQuick.CreateControl();
+            if (latestFileQuick.DisplayedFilePath != @"C:\activity\latest\final.png")
+            {
+                return 86;
+            }
+
+            pinnedFolder = new PinnedFolderForm(
+                new PinnedFolder(@"C:\pins\alpha", DateTime.Now, new Point(72, 72)),
+                _ => pinnedFolderOpenCount++,
+                _ => { },
+                _ => { },
+                _ => { },
+                (_, _) => { });
+            pinnedFolder.CreateControl();
+            pinnedFolder.ShowAt(new Point(72, 72));
+            pinnedFolder.UpdatePinnedFolder(new PinnedFolder(
+                @"C:\pins\alpha",
+                DateTime.Now,
+                new Point(96, 96)));
+            if (!pinnedFolder.Visible
+                || pinnedFolder.FolderPath != @"C:\pins\alpha"
+                || pinnedFolder.Size != FloatingFrameAssets.PinnedFrame.Size
+                || FloatingFrameAssets.PinnedFrame.Size != new Size(108, 90))
+            {
+                return 94;
+            }
+            pinnedFolder.Hide();
 
             contextMenu = new ContextMenuStrip();
             quickMenu = new FavoriteQuickMenuForm(
@@ -428,20 +888,16 @@ public static class SmokeTest
                     DateTime.Now))
                 .ToArray();
             quickMenu.UpdateFavorites(visibleFavorites);
-            quickMenu.ApplyAppearance(appearanceColor, 20);
             quickMenu.PrepareForShow();
             quickMenu.Location = Screen.PrimaryScreen?.WorkingArea.Location ?? Point.Empty;
             quickMenu.Show();
 
             infoPopup = new FavoriteInfoPopupForm();
-            infoPopup.ApplyAppearance(appearanceColor, 20);
-            infoPopup.ShowFor(visibleFavorites[0], new Rectangle(quickMenu.Right, quickMenu.Bottom - 70, 101, 70));
+            infoPopup.ShowFor(visibleFavorites[0], new Rectangle(quickMenu.Right, quickMenu.Bottom - 90, 108, 90));
             settingsForm = new SettingsForm(
                 Array.Empty<WatchScope>(),
                 Array.Empty<string>(),
                 floatingFavoriteCount: 8,
-                floatingBackgroundArgb: appearanceColor.ToArgb(),
-                floatingOpacityPercent: 20,
                 startWithWindows: true);
 
             settingsForm.CreateControl();
@@ -453,20 +909,16 @@ public static class SmokeTest
                 .All(isOrdered => isOrdered);
             if (!quickMenu.Visible
                 || floating.FavoriteCount != 14
-                || floating.SurfaceColor.ToArgb() != appearanceColor.ToArgb()
-                || floating.AppearanceOpacityPercent != 20
                 || quickMenu.ItemCount != 13
-                || quickMenu.AppearanceBackgroundColor.ToArgb() != appearanceColor.ToArgb()
-                || quickMenu.AppearanceOpacityPercent != 20
                 || itemTops.Count != 13
                 || !orderedBottomUp
                 || !infoPopup.Visible
-                || infoPopup.SurfaceColor.ToArgb() != appearanceColor.ToArgb()
-                || infoPopup.AppearanceOpacityPercent != 20
                 || settingsForm.FloatingFavoriteCount != 8
-                || settingsForm.FloatingBackgroundArgb != appearanceColor.ToArgb()
-                || settingsForm.FloatingOpacityPercent != 20
                 || !settingsForm.StartWithWindows
+                || settingsForm.OpenLatestFolderHotKey.DisplayText() != "Ctrl+Alt+F"
+                || settingsForm.CopyLatestFolderPathHotKey.DisplayText() != "Ctrl+Alt+D"
+                || !ContainsControlText(settingsForm, "打开最新文件夹")
+                || !ContainsControlText(settingsForm, "复制最新文件夹地址")
                 || !ContainsControlText(settingsForm, $"版本：{Application.ProductVersion}")
                 || !ContainsControlText(settingsForm, "开发者：cslm"))
             {
@@ -507,7 +959,7 @@ public static class SmokeTest
 
                     if (index == 0)
                     {
-                        floating.UpdateLatest(folder, monitoring: true);
+                        floating.UpdateLatest(folder, folder.Files[0], monitoring: true);
                     }
 
 
@@ -540,7 +992,11 @@ public static class SmokeTest
             }
 
             var afterUpdates = GetGuiResources(Process.GetCurrentProcess().Handle, 0);
-            return afterUpdates <= baseline + 10 && quickMenu.ItemCount == 13 ? 0 : 40;
+            return afterUpdates <= baseline + 10
+                && quickMenu.ItemCount == 13
+                && floating.LatestFileCount == 1
+                ? 0
+                : 40;
         }
         finally
         {
@@ -550,6 +1006,8 @@ public static class SmokeTest
             }
 
             floating?.Dispose();
+            pinnedFolder?.Dispose();
+            latestFileQuick?.Dispose();
             infoPopup?.Dispose();
             settingsForm?.Dispose();
             quickMenu?.Dispose();

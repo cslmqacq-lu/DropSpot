@@ -6,10 +6,10 @@
     <Nullable>enable</Nullable>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>1.0.0</Version>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
-    <FileVersion>1.0.0.0</FileVersion>
-    <InformationalVersion>1.0.0</InformationalVersion>
+    <Version>1.0.7</Version>
+    <AssemblyVersion>1.0.7.0</AssemblyVersion>
+    <FileVersion>1.0.7.0</FileVersion>
+    <InformationalVersion>1.0.7</InformationalVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <AssemblyName>DropSpot</AssemblyName>
     <RootNamespace>DropSpot</RootNamespace>
@@ -24,6 +24,10 @@
 
   <ItemGroup>
     <EmbeddedResource Include="assets\DropSpot.ico" LogicalName="DropSpot.AppIcon.ico" />
+    <EmbeddedResource Include="assets\floating\main-frame.png" LogicalName="DropSpot.Floating.Main.png" />
+    <EmbeddedResource Include="assets\floating\favorite-frame.png" LogicalName="DropSpot.Floating.Favorite.png" />
+    <EmbeddedResource Include="assets\floating\pinned-frame.png" LogicalName="DropSpot.Floating.Pinned.png" />
+    <EmbeddedResource Include="assets\floating\popup-frame.png" LogicalName="DropSpot.Floating.Popup.png" />
   </ItemGroup>
 
 </Project>

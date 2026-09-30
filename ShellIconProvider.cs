@@ -21,13 +21,24 @@ public static class ShellIconProvider
 
     public static Image FileIcon(string filePath)
     {
+        return FileIcon(filePath, large: false);
+    }
+
+    public static Image LargeFileIcon(string filePath)
+    {
+        return FileIcon(filePath, large: true);
+    }
+
+    private static Image FileIcon(string filePath, bool large)
+    {
         var extension = Path.GetExtension(filePath);
         if (string.IsNullOrWhiteSpace(extension))
         {
             extension = "__file__";
         }
 
-        return Cache.GetOrAdd(extension, _ => LoadIcon("file" + extension, FileAttributeNormal, large: false));
+        var cacheKey = $"{extension}|{(large ? "large" : "small")}";
+        return Cache.GetOrAdd(cacheKey, _ => LoadIcon("file" + extension, FileAttributeNormal, large));
     }
 
     public static void DisposeCache()

@@ -36,9 +36,10 @@ $installerName = "DropSpot_Setup_v${version}_win-x64.exe"
 $installerPath = Join-Path $DistRoot $installerName
 $checksumsPath = Join-Path $DistRoot "SHA256SUMS.txt"
 
-Reset-ProjectDirectory $ArtifactsRoot
-Reset-ProjectDirectory $DistRoot
-New-Item -ItemType Directory -Path $portableDir -Force | Out-Null
+New-Item -ItemType Directory -Path $ArtifactsRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $portableRoot -Force | Out-Null
+Reset-ProjectDirectory $portableDir
 
 Push-Location $ProjectRoot
 try {

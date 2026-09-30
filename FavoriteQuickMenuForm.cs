@@ -1,9 +1,12 @@
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+
 namespace DropSpot;
 
 internal sealed class FavoriteQuickMenuForm : Form
 {
-    private const int ItemWidth = 101;
-    private const int ItemHeight = 70;
+    private const int ItemWidth = 108;
+    private const int ItemHeight = 90;
     private const int ItemGap = 6;
     private readonly Action<FavoriteFolder> _openFavorite;
     private readonly Action<FavoriteFolder, Rectangle> _showInfo;
@@ -11,10 +14,9 @@ internal sealed class FavoriteQuickMenuForm : Form
     private readonly Action _scheduleCollapse;
     private readonly Action<FavoriteFolder> _prepareContextMenu;
     private readonly ContextMenuStrip _contextMenu;
+    private readonly LayeredImageBackdropForm _backdrop = new();
     private readonly List<FavoriteQuickItem> _items = new();
     private IReadOnlyList<FavoriteFolder> _favorites = Array.Empty<FavoriteFolder>();
-    private Color _backgroundColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
-    private int _opacityPercent = AppSettings.DefaultFloatingOpacityPercent;
 
     public FavoriteQuickMenuForm(
         Action<FavoriteFolder> openFavorite,
@@ -36,11 +38,11 @@ internal sealed class FavoriteQuickMenuForm : Form
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        BackColor = Color.Black;
-        TransparencyKey = Color.Empty;
-        Opacity = 1D;
+        TransparentWindowStyle.ApplyToForeground(this);
         Width = ItemWidth;
         Deactivate += (_, _) => _scheduleCollapse();
+        LocationChanged += (_, _) => SyncBackdrop();
+        SizeChanged += (_, _) => SyncBackdrop();
     }
 
     public void UpdateFavorites(IReadOnlyList<FavoriteFolder> favorites)
@@ -57,24 +59,8 @@ internal sealed class FavoriteQuickMenuForm : Form
         SyncItems();
     }
 
-    public void ApplyAppearance(Color backgroundColor, int opacityPercent)
-    {
-        _backgroundColor = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
-        _opacityPercent = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent);
-        Opacity = 1D;
-        foreach (var item in _items)
-        {
-            item.ApplyAppearance(_backgroundColor);
-        }
-
-        WindowTint.Apply(this, _backgroundColor, _opacityPercent);
-        Invalidate(invalidateChildren: true);
-    }
-
     internal int ItemCount => _items.Count;
     internal IReadOnlyList<int> ItemTops => _items.Select(item => item.Top).ToArray();
-    internal Color AppearanceBackgroundColor => _backgroundColor;
-    internal int AppearanceOpacityPercent => _opacityPercent;
 
     internal bool TryGetVisibleContentBounds(out Rectangle bounds)
     {
@@ -97,16 +83,24 @@ internal sealed class FavoriteQuickMenuForm : Form
     {
         if (disposing)
         {
+            _backdrop.Dispose();
             DisposeItems();
         }
 
         base.Dispose(disposing);
     }
 
-    protected override void OnHandleCreated(EventArgs e)
+    protected override void OnVisibleChanged(EventArgs e)
     {
-        base.OnHandleCreated(e);
-        WindowTint.Apply(this, _backgroundColor, _opacityPercent);
+        base.OnVisibleChanged(e);
+        if (Visible)
+        {
+            BeginInvoke(SyncBackdrop);
+        }
+        else
+        {
+            _backdrop.Hide();
+        }
     }
 
     private void SyncItems()
@@ -125,7 +119,6 @@ internal sealed class FavoriteQuickMenuForm : Form
                     _hideInfo,
                     _prepareContextMenu,
                     _contextMenu);
-                item.ApplyAppearance(_backgroundColor);
                 _items.Add(item);
                 Controls.Add(item);
             }
@@ -137,27 +130,36 @@ internal sealed class FavoriteQuickMenuForm : Form
             _items[index].UpdateFavorite(_favorites[index], index + 2);
         }
 
-        UpdateWindowRegion();
+        UpdateBackdropImage();
     }
 
-    private void UpdateWindowRegion()
+    private void UpdateBackdropImage()
     {
-        Region?.Dispose();
         if (_items.Count == 0)
         {
-            Region = null;
             return;
         }
 
-        var combined = new Region(new Rectangle(0, 0, 0, 0));
+        using var combined = new Bitmap(Width, Height, PixelFormat.Format32bppPArgb);
+        using var graphics = Graphics.FromImage(combined);
+        graphics.CompositingMode = CompositingMode.SourceCopy;
         foreach (var item in _items)
         {
-            using var itemRegion = FloatingFolderForm.CreateNativeRoundedRegion(item.ClientSize, 10);
-            itemRegion.Translate(item.Left, item.Top);
-            combined.Union(itemRegion);
+            graphics.DrawImageUnscaled(FloatingFrameAssets.FavoriteFrame, item.Left, item.Top);
         }
 
-        Region = combined;
+        _backdrop.SetImage(combined);
+        SyncBackdrop();
+    }
+
+    private void SyncBackdrop()
+    {
+        if (IsDisposed || _backdrop.IsDisposed)
+        {
+            return;
+        }
+
+        _backdrop.SyncTo(this);
     }
 
     private void DisposeItems()
@@ -205,7 +207,7 @@ internal sealed class FavoriteQuickMenuForm : Form
             _icon.Image = ShellIconProvider.FolderIcon();
             _icon.SizeMode = PictureBoxSizeMode.CenterImage;
             _icon.BackColor = Color.Transparent;
-            _icon.Location = new Point(27, 2);
+            _icon.Location = new Point(30, 9);
             _icon.Size = new Size(48, 44);
             Controls.Add(_icon);
 
@@ -214,14 +216,14 @@ internal sealed class FavoriteQuickMenuForm : Form
             _name.ForeColor = Theme.Text;
             _name.BackColor = Color.Transparent;
             _name.TextAlign = ContentAlignment.MiddleCenter;
-            _name.Location = new Point(8, 46);
-            _name.Size = new Size(85, 18);
+            _name.Location = new Point(11, 61);
+            _name.Size = new Size(86, 18);
             Controls.Add(_name);
 
             _rank.Font = _rankFont;
             _rank.ForeColor = Theme.Dim;
             _rank.BackColor = Color.Transparent;
-            _rank.Location = new Point(7, 5);
+            _rank.Location = new Point(8, 7);
             _rank.Size = new Size(18, 14);
             Controls.Add(_rank);
 
@@ -241,20 +243,10 @@ internal sealed class FavoriteQuickMenuForm : Form
                 };
             }
 
-            SizeChanged += (_, _) => UpdateRoundedRegion();
-            UpdateRoundedRegion();
             UpdateFavorite(favorite, rank);
         }
 
         public string FolderPath => _favorite.Path;
-
-        public void ApplyAppearance(Color backgroundColor)
-        {
-            BackColor = Color.Transparent;
-            _name.ForeColor = Theme.TextForBackground(backgroundColor);
-            _rank.ForeColor = Theme.MutedTextForBackground(backgroundColor);
-            Invalidate(invalidateChildren: true);
-        }
 
         public void UpdateFavorite(FavoriteFolder favorite, int rank)
         {
@@ -290,26 +282,20 @@ internal sealed class FavoriteQuickMenuForm : Form
             });
         }
 
-        private void UpdateRoundedRegion()
-        {
-            Region?.Dispose();
-            Region = FloatingFolderForm.CreateNativeRoundedRegion(ClientSize, 10);
-        }
     }
 }
 
 internal sealed class FavoriteInfoPopupForm : Form
 {
-    private const int PopupWidth = 360;
-    private const int PopupHeight = 110;
+    private const int PopupWidth = 196;
+    private const int PopupHeight = 90;
     private readonly Panel _surface = new();
     private readonly Label _name = new();
     private readonly Label _path = new();
     private readonly Label _time = new();
     private readonly Font _nameFont = new("Microsoft YaHei UI", 9F, FontStyle.Bold);
     private readonly Font _detailFont = new("Microsoft YaHei UI", 7.5F);
-    private Color _backgroundColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
-    private int _opacityPercent = AppSettings.DefaultFloatingOpacityPercent;
+    private readonly LayeredImageBackdropForm _backdrop = new();
     public FavoriteInfoPopupForm()
     {
         FormBorderStyle = FormBorderStyle.None;
@@ -318,14 +304,12 @@ internal sealed class FavoriteInfoPopupForm : Form
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
         Size = new Size(PopupWidth, PopupHeight);
-        BackColor = Color.Black;
-        TransparencyKey = Color.Empty;
-        Opacity = 1D;
+        TransparentWindowStyle.ApplyToForeground(this);
         DoubleBuffered = true;
+        _backdrop.SetImage(FloatingFrameAssets.PopupFrame);
 
         _surface.Bounds = ClientRectangle;
         _surface.BackColor = Color.Transparent;
-        _surface.Region = FloatingFolderForm.CreateNativeRoundedRegion(_surface.ClientSize, 9);
         Controls.Add(_surface);
 
         _name.Font = _nameFont;
@@ -345,29 +329,22 @@ internal sealed class FavoriteInfoPopupForm : Form
         _time.BackColor = Color.Transparent;
         _surface.Controls.Add(_time);
         SizeChanged += (_, _) => UpdateRoundedSurface();
+        LocationChanged += (_, _) => SyncBackdrop();
         LayoutLabels();
+        UpdateRoundedSurface();
     }
 
-    public void ApplyAppearance(Color backgroundColor, int opacityPercent)
+    protected override void OnVisibleChanged(EventArgs e)
     {
-        _backgroundColor = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
-        _opacityPercent = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent);
-        Opacity = 1D;
-        _surface.BackColor = Color.Transparent;
-        _name.ForeColor = Theme.TextForBackground(_backgroundColor);
-        _path.ForeColor = Theme.MutedTextForBackground(_backgroundColor);
-        _time.ForeColor = Theme.HighlightTextForBackground(_backgroundColor);
-        WindowTint.Apply(this, _backgroundColor, _opacityPercent);
-        _surface.Invalidate(invalidateChildren: true);
-    }
-
-    internal Color SurfaceColor => _backgroundColor;
-    internal int AppearanceOpacityPercent => _opacityPercent;
-
-    protected override void OnHandleCreated(EventArgs e)
-    {
-        base.OnHandleCreated(e);
-        WindowTint.Apply(this, _backgroundColor, _opacityPercent);
+        base.OnVisibleChanged(e);
+        if (Visible)
+        {
+            BeginInvoke(SyncBackdrop);
+        }
+        else
+        {
+            _backdrop.Hide();
+        }
     }
 
     protected override bool ShowWithoutActivation => true;
@@ -400,13 +377,16 @@ internal sealed class FavoriteInfoPopupForm : Form
             Show();
         }
 
+        SyncBackdrop();
         BringToFront();
+        _backdrop.ShowBehind(this);
     }
 
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
+            _backdrop.Dispose();
             _nameFont.Dispose();
             _detailFont.Dispose();
         }
@@ -416,18 +396,25 @@ internal sealed class FavoriteInfoPopupForm : Form
 
     private void LayoutLabels()
     {
-        _name.SetBounds(16, 10, PopupWidth - 32, 21);
-        _path.SetBounds(16, 34, PopupWidth - 32, 42);
-        _time.SetBounds(16, 84, PopupWidth - 32, 17);
+        _name.SetBounds(14, 8, PopupWidth - 28, 20);
+        _path.SetBounds(14, 29, PopupWidth - 28, 34);
+        _time.SetBounds(14, 66, PopupWidth - 28, 16);
     }
 
     private void UpdateRoundedSurface()
     {
         _surface.Bounds = ClientRectangle;
-        _surface.Region?.Dispose();
-        _surface.Region = FloatingFolderForm.CreateNativeRoundedRegion(_surface.ClientSize, 9);
-        Region?.Dispose();
-        Region = FloatingFolderForm.CreateNativeRoundedRegion(ClientSize, 9);
+        SyncBackdrop();
+    }
+
+    private void SyncBackdrop()
+    {
+        if (IsDisposed || _backdrop.IsDisposed)
+        {
+            return;
+        }
+
+        _backdrop.SyncTo(this);
     }
 
     private static string RelativeTime(DateTime time)

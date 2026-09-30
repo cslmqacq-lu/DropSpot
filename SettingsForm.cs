@@ -5,27 +5,34 @@ public sealed class SettingsForm : Form
     private readonly CheckedListBox _driveList = new();
     private readonly ListBox _excludeList = new();
     private readonly NumericUpDown _floatingFavoriteCount = new();
-    private readonly NumericUpDown _floatingOpacity = new();
-    private readonly Button _floatingColorButton = new();
     private readonly CheckBox _startWithWindows = new();
+    private readonly HotKeyEditor _openLatestHotKey = new();
+    private readonly HotKeyEditor _copyLatestPathHotKey = new();
+    private readonly Label _hotKeyError = new();
     private readonly List<WatchScope> _watchScopes;
     private readonly List<string> _excludedPaths;
-    private Color _floatingBackgroundColor;
+    private readonly Action? _openDiagnostics;
 
     public SettingsForm(
         IEnumerable<WatchScope> watchScopes,
         IEnumerable<string> excludedPaths,
         int floatingFavoriteCount,
-        int floatingBackgroundArgb,
-        int floatingOpacityPercent,
-        bool startWithWindows)
+        bool startWithWindows,
+        Action? openDiagnostics = null,
+        SavedHotKey? openLatestFolderHotKey = null,
+        SavedHotKey? copyLatestFolderPathHotKey = null)
     {
         _watchScopes = watchScopes.Select(scope => new WatchScope(scope.Path, scope.Enabled)).ToList();
         _excludedPaths = excludedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         _floatingFavoriteCount.Value = AppSettings.NormalizeFloatingFavoriteCount(floatingFavoriteCount);
-        _floatingBackgroundColor = AppSettings.GetFloatingBackgroundColor(floatingBackgroundArgb);
-        _floatingOpacity.Value = AppSettings.NormalizeFloatingOpacityPercent(floatingOpacityPercent);
         _startWithWindows.Checked = startWithWindows;
+        _openDiagnostics = openDiagnostics;
+        _openLatestHotKey.Value = SavedHotKey.Normalize(
+            openLatestFolderHotKey,
+            SavedHotKey.OpenLatestFolderDefault());
+        _copyLatestPathHotKey.Value = SavedHotKey.Normalize(
+            copyLatestFolderPathHotKey,
+            SavedHotKey.CopyLatestFolderPathDefault());
 
         Text = "监视设置";
         Size = new Size(460, 560);
@@ -44,9 +51,9 @@ public sealed class SettingsForm : Form
     public IReadOnlyList<WatchScope> WatchScopes => _watchScopes;
     public IReadOnlyList<string> ExcludedPaths => _excludedPaths;
     public int FloatingFavoriteCount => (int)_floatingFavoriteCount.Value;
-    public int FloatingBackgroundArgb => _floatingBackgroundColor.ToArgb();
-    public int FloatingOpacityPercent => (int)_floatingOpacity.Value;
     public bool StartWithWindows => _startWithWindows.Checked;
+    public SavedHotKey OpenLatestFolderHotKey => _openLatestHotKey.Value;
+    public SavedHotKey CopyLatestFolderPathHotKey => _copyLatestPathHotKey.Value;
 
     private void BuildUi()
     {
@@ -113,6 +120,24 @@ public sealed class SettingsForm : Form
         tabs.TabPages.Add(floatingPage);
         BuildFloatingPage(floatingPage);
 
+        var hotKeyPage = new TabPage("快捷键")
+        {
+            BackColor = Theme.Window,
+            ForeColor = Theme.Text,
+            Padding = new Padding(8)
+        };
+        tabs.TabPages.Add(hotKeyPage);
+        BuildHotKeyPage(hotKeyPage);
+
+        var diagnosticsPage = new TabPage("诊断")
+        {
+            BackColor = Theme.Window,
+            ForeColor = Theme.Text,
+            Padding = new Padding(8)
+        };
+        tabs.TabPages.Add(diagnosticsPage);
+        BuildDiagnosticsPage(diagnosticsPage);
+
         var aboutPage = new TabPage("关于")
         {
             BackColor = Theme.Window,
@@ -132,8 +157,14 @@ public sealed class SettingsForm : Form
         root.Controls.Add(footer, 0, 2);
 
         var okButton = CreateButton("确定", primary: true);
-        okButton.DialogResult = DialogResult.OK;
-        okButton.Click += (_, _) => Save();
+        okButton.Click += (_, _) =>
+        {
+            if (Save())
+            {
+                DialogResult = DialogResult.OK;
+                Close();
+            }
+        };
         footer.Controls.Add(okButton);
 
         var cancelButton = CreateButton("取消", primary: false);
@@ -244,17 +275,14 @@ public sealed class SettingsForm : Form
         var root = new TableLayoutPanel
         {
             Dock = DockStyle.Top,
-            Height = 206,
+            Height = 92,
             ColumnCount = 2,
-            RowCount = 5,
+            RowCount = 2,
             BackColor = Theme.Window,
             Padding = new Padding(4, 8, 4, 0)
         };
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
         root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82F));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
-        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38F));
         page.Controls.Add(root);
@@ -276,64 +304,67 @@ public sealed class SettingsForm : Form
         _floatingFavoriteCount.TextAlign = HorizontalAlignment.Center;
         root.Controls.Add(_floatingFavoriteCount, 1, 0);
 
-        root.Controls.Add(new Label
-        {
-            Text = "背景色",
-            Dock = DockStyle.Fill,
-            ForeColor = Theme.Text,
-            TextAlign = ContentAlignment.MiddleLeft
-        }, 0, 1);
-
-        _floatingColorButton.Dock = DockStyle.Fill;
-        _floatingColorButton.Margin = new Padding(0, 5, 0, 5);
-        _floatingColorButton.FlatStyle = FlatStyle.Flat;
-        _floatingColorButton.Click += (_, _) => ChooseFloatingColor();
-        root.Controls.Add(_floatingColorButton, 1, 1);
-        UpdateFloatingColorButton();
-
-        root.Controls.Add(new Label
-        {
-            Text = "背景不透明度",
-            Dock = DockStyle.Fill,
-            ForeColor = Theme.Text,
-            TextAlign = ContentAlignment.MiddleLeft
-        }, 0, 2);
-
-        _floatingOpacity.Dock = DockStyle.Fill;
-        _floatingOpacity.Minimum = AppSettings.MinFloatingOpacityPercent;
-        _floatingOpacity.Maximum = AppSettings.MaxFloatingOpacityPercent;
-        _floatingOpacity.Increment = 5;
-        _floatingOpacity.BackColor = Theme.Panel;
-        _floatingOpacity.ForeColor = Theme.Text;
-        _floatingOpacity.BorderStyle = BorderStyle.FixedSingle;
-        _floatingOpacity.TextAlign = HorizontalAlignment.Center;
-        root.Controls.Add(_floatingOpacity, 1, 2);
-
-        root.Controls.Add(new Label
-        {
-            Text = "恢复默认外观",
-            Dock = DockStyle.Fill,
-            ForeColor = Theme.Text,
-            TextAlign = ContentAlignment.MiddleLeft
-        }, 0, 3);
-
-        var resetButton = CreateButton("默认", primary: false);
-        resetButton.Dock = DockStyle.Fill;
-        resetButton.Margin = new Padding(0, 5, 0, 5);
-        resetButton.Click += (_, _) => RestoreDefaultFloatingAppearance();
-        root.Controls.Add(resetButton, 1, 3);
-
         var description = new Label
         {
-            Text = "收藏从下往上排列；颜色和不透明度统一用于浮窗、展开栏和信息框。",
+            Text = "收藏从下往上按最近更新时间排列。",
             Dock = DockStyle.Fill,
             ForeColor = Theme.Muted,
             TextAlign = ContentAlignment.MiddleLeft,
             AutoEllipsis = true
         };
         root.SetColumnSpan(description, 2);
-        root.Controls.Add(description, 0, 4);
+        root.Controls.Add(description, 0, 1);
     }
+
+    private void BuildHotKeyPage(Control page)
+    {
+        var root = new TableLayoutPanel
+        {
+            Dock = DockStyle.Top,
+            Height = 176,
+            ColumnCount = 2,
+            RowCount = 4,
+            Padding = new Padding(4, 14, 4, 0),
+            BackColor = Theme.Window
+        };
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 150));
+        root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 46));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
+        page.Controls.Add(root);
+
+        root.Controls.Add(CreateHotKeyLabel("打开最新文件夹"), 0, 0);
+        root.Controls.Add(_openLatestHotKey.Control, 1, 0);
+        root.Controls.Add(CreateHotKeyLabel("复制最新文件夹地址"), 0, 1);
+        root.Controls.Add(_copyLatestPathHotKey.Control, 1, 1);
+
+        var hint = new Label
+        {
+            Text = "至少勾选一个修饰键，字母范围为 A-Z。",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.MiddleLeft
+        };
+        root.SetColumnSpan(hint, 2);
+        root.Controls.Add(hint, 0, 2);
+
+        _hotKeyError.Dock = DockStyle.Fill;
+        _hotKeyError.ForeColor = Color.FromArgb(248, 113, 113);
+        _hotKeyError.TextAlign = ContentAlignment.MiddleLeft;
+        _hotKeyError.AutoEllipsis = true;
+        root.SetColumnSpan(_hotKeyError, 2);
+        root.Controls.Add(_hotKeyError, 0, 3);
+    }
+
+    private static Label CreateHotKeyLabel(string text) => new()
+    {
+        Text = text,
+        Dock = DockStyle.Fill,
+        ForeColor = Theme.Text,
+        TextAlign = ContentAlignment.MiddleLeft
+    };
 
     private static void BuildAboutPage(Control page)
     {
@@ -375,37 +406,43 @@ public sealed class SettingsForm : Form
         }, 0, 2);
     }
 
-    private void ChooseFloatingColor()
+    private void BuildDiagnosticsPage(Control page)
     {
-        using var dialog = new ColorDialog
+        var root = new TableLayoutPanel
         {
-            Color = _floatingBackgroundColor,
-            AllowFullOpen = true,
-            AnyColor = true,
-            FullOpen = true
+            Dock = DockStyle.Top,
+            Height = 126,
+            RowCount = 3,
+            Padding = new Padding(8, 16, 8, 0),
+            BackColor = Theme.Window
         };
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 36));
+        page.Controls.Add(root);
 
-        if (dialog.ShowDialog(this) == DialogResult.OK)
+        root.Controls.Add(new Label
         {
-            _floatingBackgroundColor = AppSettings.GetFloatingBackgroundColor(dialog.Color.ToArgb());
-            UpdateFloatingColorButton();
-        }
-    }
+            Text = "查看每个磁盘的连接状态、最近事件和错误日志。",
+            Dock = DockStyle.Fill,
+            ForeColor = Theme.Muted,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 0);
 
-    private void RestoreDefaultFloatingAppearance()
-    {
-        _floatingBackgroundColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
-        _floatingOpacity.Value = AppSettings.DefaultFloatingOpacityPercent;
-        UpdateFloatingColorButton();
-    }
+        var button = CreateButton("打开诊断信息", primary: false);
+        button.AutoSize = true;
+        button.Enabled = _openDiagnostics is not null;
+        button.Click += (_, _) => _openDiagnostics?.Invoke();
+        root.Controls.Add(button, 0, 1);
 
-    private void UpdateFloatingColorButton()
-    {
-        _floatingColorButton.Text = $"#{_floatingBackgroundColor.R:X2}{_floatingBackgroundColor.G:X2}{_floatingBackgroundColor.B:X2}";
-        _floatingColorButton.BackColor = _floatingBackgroundColor;
-        _floatingColorButton.ForeColor = Theme.TextForBackground(_floatingBackgroundColor);
-        _floatingColorButton.FlatAppearance.BorderColor = Theme.BorderForBackground(_floatingBackgroundColor);
-        _floatingColorButton.FlatAppearance.BorderSize = 1;
+        root.Controls.Add(new Label
+        {
+            Text = AppLog.LogDirectory,
+            Dock = DockStyle.Fill,
+            AutoEllipsis = true,
+            ForeColor = Theme.Dim,
+            TextAlign = ContentAlignment.MiddleLeft
+        }, 0, 2);
     }
 
     private static Button CreateButton(string text, bool primary)
@@ -505,8 +542,14 @@ public sealed class SettingsForm : Form
         }
     }
 
-    private void Save()
+    private bool Save()
     {
+        if (!TryValidateHotKeys(out var error))
+        {
+            _hotKeyError.Text = error;
+            return false;
+        }
+
         foreach (var item in _driveList.Items.Cast<DriveItem>())
         {
             item.Scope.Enabled = _driveList.CheckedItems.Contains(item);
@@ -522,6 +565,101 @@ public sealed class SettingsForm : Form
                 _excludedPaths.Add(path);
             }
         }
+
+        _hotKeyError.Text = string.Empty;
+        return true;
+    }
+
+    private bool TryValidateHotKeys(out string error)
+    {
+        var openLatest = OpenLatestFolderHotKey;
+        if (!openLatest.TryValidate(out var openError))
+        {
+            error = $"打开最新文件夹：{openError}";
+            return false;
+        }
+
+        var copyLatest = CopyLatestFolderPathHotKey;
+        if (!copyLatest.TryValidate(out var copyError))
+        {
+            error = $"复制最新文件夹地址：{copyError}";
+            return false;
+        }
+
+        if (openLatest.SameCombination(copyLatest))
+        {
+            error = "两个快捷键不能使用相同组合";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    private sealed class HotKeyEditor
+    {
+        private readonly CheckBox _ctrl = CreateModifier("Ctrl");
+        private readonly CheckBox _alt = CreateModifier("Alt");
+        private readonly CheckBox _shift = CreateModifier("Shift");
+        private readonly ComboBox _key = new();
+
+        public HotKeyEditor()
+        {
+            var row = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.LeftToRight,
+                WrapContents = false,
+                BackColor = Theme.Window,
+                Padding = new Padding(0, 7, 0, 0)
+            };
+            row.Controls.Add(_ctrl);
+            row.Controls.Add(_alt);
+            row.Controls.Add(_shift);
+
+            _key.DropDownStyle = ComboBoxStyle.DropDownList;
+            _key.Width = 54;
+            _key.Height = 26;
+            _key.Margin = new Padding(8, 1, 0, 0);
+            _key.BackColor = Theme.Panel;
+            _key.ForeColor = Theme.Text;
+            _key.Items.AddRange(Enumerable.Range('A', 26).Select(value => ((char)value).ToString()).Cast<object>().ToArray());
+            row.Controls.Add(_key);
+            Control = row;
+        }
+
+        public Control Control { get; }
+
+        public SavedHotKey Value
+        {
+            get => new()
+            {
+                Ctrl = _ctrl.Checked,
+                Alt = _alt.Checked,
+                Shift = _shift.Checked,
+                Key = _key.SelectedItem?.ToString() ?? string.Empty
+            };
+            set
+            {
+                _ctrl.Checked = value.Ctrl;
+                _alt.Checked = value.Alt;
+                _shift.Checked = value.Shift;
+                _key.SelectedItem = value.Key.Trim().ToUpperInvariant();
+                if (_key.SelectedIndex < 0)
+                {
+                    _key.SelectedIndex = 0;
+                }
+            }
+        }
+
+        private static CheckBox CreateModifier(string text) => new()
+        {
+            Text = text,
+            AutoSize = true,
+            ForeColor = Theme.Text,
+            BackColor = Theme.Window,
+            Margin = new Padding(0, 3, 10, 0)
+        };
     }
 
     private sealed record DriveItem(

@@ -20,8 +20,14 @@ public sealed class FileMonitorService : IDisposable
 
     public event EventHandler<ChangeRecord>? Changed;
     public event EventHandler<string>? MonitorError;
+    public event EventHandler<VolumeMonitorStatus>? VolumeStatusChanged;
 
     public IReadOnlyCollection<string> ActiveScopes => _watchers.SelectMany(watcher => watcher.ScopePaths).ToArray();
+    public IReadOnlyList<VolumeMonitorStatus> VolumeStatuses => _watchers
+        .Select(watcher => watcher.Status)
+        .OrderBy(status => status.VolumeRoot, StringComparer.OrdinalIgnoreCase)
+        .ToArray();
+    public bool IsRunning => _watchers.Count > 0;
 
     public void Start(IEnumerable<WatchScope> scopes, IEnumerable<string>? excludedPaths = null)
     {
@@ -30,21 +36,29 @@ public sealed class FileMonitorService : IDisposable
 
         var enabledScopes = scopes
             .Where(scope => scope.Enabled)
-            .Where(scope => Directory.Exists(scope.Path))
+            .Where(scope => !string.IsNullOrWhiteSpace(scope.Path))
             .Select(scope => NormalizeDirectoryPath(scope.Path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
-        foreach (var missing in scopes.Where(scope => scope.Enabled && !Directory.Exists(scope.Path)))
+        foreach (var missing in enabledScopes.Where(path => !Directory.Exists(path)))
         {
-            MonitorError?.Invoke(this, $"路径不存在，已跳过：{missing.Path}");
+            MonitorError?.Invoke(this, $"路径暂不可用，将等待恢复：{missing}");
         }
 
-        foreach (var group in enabledScopes.GroupBy(path => Path.GetPathRoot(path) ?? path, StringComparer.OrdinalIgnoreCase))
+        foreach (var group in enabledScopes
+                     .Select(path => new { Path = path, Root = Path.GetPathRoot(path) })
+                     .Where(item => !string.IsNullOrWhiteSpace(item.Root))
+                     .GroupBy(item => item.Root!, item => item.Path, StringComparer.OrdinalIgnoreCase))
         {
             try
             {
-                var watcher = new UsnJournalVolumeWatcher(group.Key, group.ToArray(), Publish, message => MonitorError?.Invoke(this, message));
+                var watcher = new UsnJournalVolumeWatcher(
+                    group.Key,
+                    group.ToArray(),
+                    Publish,
+                    message => MonitorError?.Invoke(this, message),
+                    status => VolumeStatusChanged?.Invoke(this, status));
                 watcher.Start();
                 _watchers.Add(watcher);
             }
@@ -251,87 +265,186 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
     private readonly string[] _scopePaths;
     private readonly Action<ChangeRecord> _publish;
     private readonly Action<string> _reportError;
+    private readonly Action<VolumeMonitorStatus> _reportStatus;
     private readonly Dictionary<FileReference, CachedDirectoryPath> _directoryPathCache = new();
     private readonly HashSet<ushort> _reportedUnsupportedVersions = new();
     private readonly Dictionary<string, DateTime> _reportedErrors = new(StringComparer.OrdinalIgnoreCase);
     private readonly CancellationTokenSource _cts = new();
+    private readonly object _statusLock = new();
+    private readonly object _handleLock = new();
     private Task? _task;
     private SafeFileHandle? _volumeHandle;
+    private VolumeMonitorStatus _status;
+    private long _resumeUsn;
+    private ulong _resumeJournalId;
 
-    public UsnJournalVolumeWatcher(string volumeRoot, string[] scopePaths, Action<ChangeRecord> publish, Action<string> reportError)
+    public UsnJournalVolumeWatcher(
+        string volumeRoot,
+        string[] scopePaths,
+        Action<ChangeRecord> publish,
+        Action<string> reportError,
+        Action<VolumeMonitorStatus> reportStatus)
     {
         _volumeRoot = NormalizeRoot(volumeRoot);
         _scopePaths = scopePaths.Select(NormalizeDirectoryPath).ToArray();
         _publish = publish;
         _reportError = reportError;
+        _reportStatus = reportStatus;
+        _status = VolumeMonitorStatus.Waiting(_volumeRoot);
     }
 
     public IReadOnlyList<string> ScopePaths => _scopePaths;
+    public VolumeMonitorStatus Status
+    {
+        get
+        {
+            lock (_statusLock)
+            {
+                return _status;
+            }
+        }
+    }
 
     public void Start()
     {
-        var drive = new DriveInfo(_volumeRoot);
-        if (!drive.IsReady || drive.DriveFormat is not ("NTFS" or "ReFS"))
-        {
-            throw new NotSupportedException($"{_volumeRoot} 文件系统 {drive.DriveFormat} 不支持 USN 监听");
-        }
-
-        _volumeHandle = OpenVolume(_volumeRoot);
-        var journal = QueryJournal(_volumeHandle);
-        _task = Task.Run(() => Run(_volumeHandle, journal.NextUsn, journal.UsnJournalId, _cts.Token));
+        PublishStatus(_status);
+        _task = Task.Run(() => Run(_cts.Token));
     }
 
-    private void Run(SafeFileHandle volumeHandle, long startUsn, ulong journalId, CancellationToken token)
+    private void Run(CancellationToken token)
     {
         var buffer = new byte[1024 * 1024];
-        var nextUsn = startUsn;
+        var retryCount = 0;
+        var connectedOnce = false;
 
         while (!token.IsCancellationRequested)
         {
             try
             {
-                var input = new ReadUsnJournalData
+                PublishStatus(Status with
                 {
-                    StartUsn = nextUsn,
-                    ReasonMask = RelevantReasonMask,
-                    ReturnOnlyOnClose = 1,
-                    Timeout = 1,
-                    BytesToWaitFor = 1,
-                    UsnJournalId = journalId
-                };
+                    State = connectedOnce ? VolumeMonitorState.Reconnecting : VolumeMonitorState.Connecting,
+                    Message = connectedOnce ? "正在重新连接" : "正在连接",
+                    RetryCount = retryCount
+                });
 
-                if (!DeviceIoControl(volumeHandle, FsctlReadUsnJournal, ref input, Marshal.SizeOf<ReadUsnJournalData>(), buffer, buffer.Length, out var bytesReturned, IntPtr.Zero))
+                var drive = new DriveInfo(_volumeRoot);
+                if (!drive.IsReady)
                 {
-                    var error = Marshal.GetLastWin32Error();
-                    if (error != 38)
-                    {
-                        ReportError($"{_volumeRoot} USN 读取失败：{new Win32Exception(error).Message}");
-                    }
+                    throw new IOException("磁盘尚未就绪");
+                }
 
+                if (drive.DriveFormat is not ("NTFS" or "ReFS"))
+                {
+                    throw new NotSupportedException($"文件系统 {drive.DriveFormat} 不支持 USN 监听");
+                }
+
+                using var volumeHandle = OpenVolume(_volumeRoot);
+                lock (_handleLock)
+                {
+                    _volumeHandle = volumeHandle;
+                }
+
+                var journal = QueryJournal(volumeHandle);
+                var canResume = _resumeJournalId == journal.UsnJournalId
+                    && _resumeUsn >= journal.FirstUsn
+                    && _resumeUsn <= journal.NextUsn;
+                var nextUsn = canResume ? _resumeUsn : journal.NextUsn;
+                _resumeJournalId = journal.UsnJournalId;
+                _resumeUsn = nextUsn;
+                connectedOnce = true;
+                PublishStatus(Status with
+                {
+                    State = VolumeMonitorState.Healthy,
+                    Message = "监视正常",
+                    RetryCount = retryCount,
+                    LastConnectedAt = DateTime.Now
+                });
+
+                ReadJournal(volumeHandle, buffer, nextUsn, journal.UsnJournalId, token);
+            }
+            catch (Exception ex) when (!token.IsCancellationRequested)
+            {
+                retryCount++;
+                var unsupported = ex is NotSupportedException;
+                var message = $"{_volumeRoot} USN 监听异常：{ex.Message}";
+                ReportError(message);
+                PublishStatus(Status with
+                {
+                    State = unsupported ? VolumeMonitorState.Error : connectedOnce ? VolumeMonitorState.Reconnecting : VolumeMonitorState.Waiting,
+                    Message = ex.Message,
+                    RetryCount = retryCount,
+                    LastErrorAt = DateTime.Now
+                });
+
+                var delay = unsupported ? TimeSpan.FromSeconds(30) : RetryDelay(retryCount);
+                if (token.WaitHandle.WaitOne(delay))
+                {
+                    break;
+                }
+            }
+            finally
+            {
+                lock (_handleLock)
+                {
+                    _volumeHandle = null;
+                }
+
+                _directoryPathCache.Clear();
+            }
+        }
+
+        PublishStatus(Status with { State = VolumeMonitorState.Stopped, Message = "已停止" });
+    }
+
+    private void ReadJournal(
+        SafeFileHandle volumeHandle,
+        byte[] buffer,
+        long startUsn,
+        ulong journalId,
+        CancellationToken token)
+    {
+        var nextUsn = startUsn;
+        while (!token.IsCancellationRequested)
+        {
+            var input = new ReadUsnJournalData
+            {
+                StartUsn = nextUsn,
+                ReasonMask = RelevantReasonMask,
+                ReturnOnlyOnClose = 1,
+                Timeout = 1,
+                BytesToWaitFor = 1,
+                UsnJournalId = journalId
+            };
+
+            if (!DeviceIoControl(volumeHandle, FsctlReadUsnJournal, ref input, Marshal.SizeOf<ReadUsnJournalData>(), buffer, buffer.Length, out var bytesReturned, IntPtr.Zero))
+            {
+                var error = Marshal.GetLastWin32Error();
+                if (error == 38)
+                {
                     if (token.WaitHandle.WaitOne(500))
                     {
-                        break;
+                        return;
                     }
 
                     continue;
                 }
 
-                if (bytesReturned >= 8)
-                {
-                    nextUsn = BitConverter.ToInt64(buffer, 0);
-                    ParseRecords(volumeHandle, buffer, bytesReturned);
-                }
-
+                throw new Win32Exception(error);
             }
-            catch (Exception ex) when (!token.IsCancellationRequested)
+
+            if (bytesReturned >= 8)
             {
-                ReportError($"{_volumeRoot} USN 监听异常：{ex.Message}");
-                if (token.WaitHandle.WaitOne(1000))
-                {
-                    break;
-                }
+                nextUsn = BitConverter.ToInt64(buffer, 0);
+                _resumeUsn = nextUsn;
+                ParseRecords(volumeHandle, buffer, bytesReturned);
             }
         }
+    }
+
+    internal static TimeSpan RetryDelay(int retryCount)
+    {
+        return TimeSpan.FromSeconds(Math.Min(30, Math.Max(2, retryCount * 2)));
     }
 
     private void ParseRecords(SafeFileHandle volumeHandle, byte[] buffer, int bytesReturned)
@@ -468,9 +581,11 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
             return;
         }
 
+        var now = DateTime.Now;
+        MarkEvent(now);
         _publish(new ChangeRecord
         {
-            Time = DateTime.Now,
+            Time = now,
             ChangeKind = changeKind,
             FolderPath = folderPath,
             FilePath = filePath,
@@ -691,6 +806,11 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
     public void Dispose()
     {
         _cts.Cancel();
+        lock (_handleLock)
+        {
+            _volumeHandle?.Dispose();
+        }
+
         try
         {
             _task?.Wait(TimeSpan.FromSeconds(2));
@@ -700,8 +820,25 @@ internal sealed class UsnJournalVolumeWatcher : IDisposable
             // Shutdown should not surface background read errors.
         }
 
-        _volumeHandle?.Dispose();
         _cts.Dispose();
+    }
+
+    private void MarkEvent(DateTime time)
+    {
+        lock (_statusLock)
+        {
+            _status = _status with { LastEventAt = time };
+        }
+    }
+
+    private void PublishStatus(VolumeMonitorStatus status)
+    {
+        lock (_statusLock)
+        {
+            _status = status;
+        }
+
+        _reportStatus(status);
     }
 
     private void ReportError(string message)

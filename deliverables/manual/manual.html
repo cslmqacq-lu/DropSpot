@@ -1,0 +1,231 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=1800, initial-scale=1">
+<title>DropSpot 使用说明书 v1.0.7</title>
+<style>
+  :root {
+    --bg: #080b0f;
+    --panel: #10151c;
+    --panel-2: #151c25;
+    --line: #2a3440;
+    --text: #f5f7f9;
+    --muted: #9ca7b3;
+    --green: #35d68a;
+    --yellow: #ffc64a;
+    --red: #ff6b61;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; width: 1800px; min-height: 3800px; background: var(--bg); color: var(--text); }
+  body { font-family: "Microsoft YaHei UI", "Segoe UI", sans-serif; letter-spacing: 0; }
+  .manual { width: 1800px; height: 3800px; overflow: hidden; position: relative; background: var(--bg); }
+  .gridline { position: absolute; inset: 0; pointer-events: none; opacity: .18; background-image: linear-gradient(#26303a 1px, transparent 1px), linear-gradient(90deg, #26303a 1px, transparent 1px); background-size: 72px 72px; }
+  .page { position: relative; padding: 74px 84px 62px; height: 100%; }
+  header { display: grid; grid-template-columns: 190px 1fr 360px; gap: 34px; align-items: center; padding-bottom: 44px; border-bottom: 2px solid var(--line); }
+  .app-icon { width: 164px; height: 164px; object-fit: contain; }
+  h1 { margin: 0; font-size: 92px; line-height: 1; font-weight: 800; letter-spacing: 0; }
+  .tagline { margin-top: 20px; color: var(--muted); font-size: 29px; line-height: 1.5; }
+  .version { justify-self: end; text-align: right; }
+  .version strong { display: block; color: var(--green); font-size: 32px; }
+  .version span { display: block; margin-top: 8px; color: var(--muted); font-size: 22px; }
+  .intro { display: grid; grid-template-columns: 1fr 1fr 1fr; margin: 42px 0 38px; border: 1px solid var(--line); }
+  .intro div { min-height: 126px; padding: 28px 30px; border-right: 1px solid var(--line); }
+  .intro div:last-child { border-right: 0; }
+  .intro b { display: block; font-size: 27px; color: var(--yellow); }
+  .intro span { display: block; margin-top: 12px; color: var(--muted); font-size: 21px; line-height: 1.45; }
+  .section { margin-top: 38px; }
+  .section-title { display: grid; grid-template-columns: 70px auto 1fr; align-items: center; gap: 18px; margin-bottom: 24px; }
+  .index { width: 58px; height: 58px; display: grid; place-items: center; border: 2px solid var(--green); color: var(--green); font-size: 26px; font-weight: 800; }
+  h2 { margin: 0; font-size: 34px; line-height: 1; }
+  .rule { height: 1px; background: var(--line); }
+  .setup-grid { display: grid; grid-template-columns: 1.05fr 1.05fr .9fr; gap: 22px; }
+  .step { min-height: 370px; padding: 24px; background: var(--panel); border: 1px solid var(--line); }
+  .step .kicker { color: var(--green); font-size: 20px; font-weight: 700; }
+  .step h3 { margin: 10px 0 10px; font-size: 27px; }
+  .step p { margin: 0; color: var(--muted); font-size: 20px; line-height: 1.55; }
+  .shot { margin-top: 18px; width: 100%; height: 224px; object-fit: contain; object-position: center top; background: #06090d; border: 1px solid #313c48; }
+  .plain-demo { margin-top: 18px; height: 224px; padding: 18px; background: #090e14; border: 1px solid #313c48; }
+  .check { display: flex; gap: 13px; align-items: center; margin-bottom: 15px; color: #dce3e8; font-size: 20px; }
+  .box { width: 24px; height: 24px; border: 1px solid #677482; background: #1d77a7; position: relative; }
+  .box:after { content: ""; position: absolute; left: 6px; top: 2px; width: 7px; height: 13px; border: solid #fff; border-width: 0 3px 3px 0; transform: rotate(45deg); }
+  .pathrow { display: flex; gap: 12px; align-items: center; padding: 9px 12px; margin-top: 8px; background: #111925; border-left: 4px solid var(--yellow); color: #cbd3db; font-size: 18px; }
+  .main-workflow { display: grid; grid-template-columns: 620px 1fr; gap: 34px; align-items: stretch; }
+  .window-shot { width: 100%; height: 724px; object-fit: contain; object-position: center; background: #05070a; border: 1px solid var(--line); }
+  .workflow-list { display: grid; gap: 16px; }
+  .flow { min-height: 124px; padding: 22px 26px 22px 82px; border: 1px solid var(--line); background: var(--panel); position: relative; }
+  .flow-num { position: absolute; left: 24px; top: 23px; color: var(--yellow); font-size: 34px; font-weight: 800; }
+  .flow b { display: block; font-size: 25px; }
+  .flow span { display: block; margin-top: 8px; color: var(--muted); font-size: 20px; line-height: 1.5; }
+  .signal { margin-top: 18px; padding: 21px 25px; display: grid; grid-template-columns: 20px 1fr auto; gap: 16px; align-items: center; border: 1px solid #234d3b; background: #0b1d16; color: #c8f4dd; font-size: 20px; }
+  .dot { width: 14px; height: 14px; background: var(--green); }
+  .signal strong { color: var(--green); }
+  .modes { display: grid; grid-template-columns: 1.05fr .95fr; gap: 26px; }
+  .mode-card { background: var(--panel); border: 1px solid var(--line); padding: 26px; min-height: 465px; }
+  .mode-card h3 { margin: 0 0 10px; font-size: 29px; }
+  .mode-card > p { margin: 0; color: var(--muted); font-size: 20px; line-height: 1.55; }
+  .floating-crop { margin-top: 22px; height: 246px; overflow: hidden; position: relative; background: #07557c; border: 1px solid #344250; }
+  .floating-crop img { position: absolute; width: 1080px; height: 1920px; object-fit: cover; left: 50%; top: -258px; transform: translateX(-50%); }
+  .legend { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 17px; }
+  .legend div { padding: 13px 15px; background: var(--panel-2); color: #d4dbe2; font-size: 18px; border-left: 3px solid var(--green); }
+  .legend div:nth-child(2) { border-left-color: var(--yellow); }
+  .pin-demo { margin-top: 24px; display: flex; align-items: center; justify-content: center; gap: 22px; height: 210px; background: #090e14; border: 1px solid #344250; }
+  .folder { position: relative; width: 118px; height: 78px; border-radius: 7px 9px 8px 8px; background: linear-gradient(#ffd45f, #f5ad24); box-shadow: inset 0 3px rgba(255,255,255,.35); }
+  .folder:before { content: ""; position: absolute; width: 52px; height: 18px; left: 0; top: -10px; border-radius: 8px 8px 0 0; background: #f2b72c; }
+  .arrow { width: 65px; height: 2px; background: #667482; position: relative; }
+  .arrow:after { content: ""; position: absolute; right: 0; top: -7px; width: 14px; height: 14px; border-top: 2px solid #667482; border-right: 2px solid #667482; transform: rotate(45deg); }
+  .pinned { width: 188px; height: 150px; padding: 16px; display: grid; place-items: center; background: #11151a; border: 1px solid #4a5662; position: relative; }
+  .pinned:after { content: "新活动"; position: absolute; top: 10px; right: 10px; padding: 4px 8px; color: var(--green); border: 1px solid #2f9364; font-size: 15px; }
+  .pin-copy { display: grid; gap: 12px; margin-top: 18px; }
+  .pin-copy div { padding: 14px 16px; color: #d5dde4; background: var(--panel-2); font-size: 18px; }
+  .tools { display: grid; grid-template-columns: 1.08fr .92fr; gap: 26px; }
+  .hotkeys { border: 1px solid var(--line); background: var(--panel); padding: 26px; }
+  .hotkey { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 30px; padding: 18px 0; border-bottom: 1px solid var(--line); }
+  .hotkey:last-child { border-bottom: 0; }
+  .hotkey b { font-size: 23px; }
+  .hotkey span { display: block; margin-top: 7px; color: var(--muted); font-size: 18px; }
+  kbd { display: inline-block; min-width: 58px; padding: 12px 14px; margin-left: 8px; text-align: center; color: var(--text); background: #090d12; border: 1px solid #4b5865; border-bottom-width: 4px; border-radius: 5px; font: 700 20px "Segoe UI", sans-serif; }
+  .tray { border: 1px solid var(--line); background: var(--panel); padding: 26px; }
+  .tray h3 { margin: 0 0 16px; font-size: 27px; }
+  .tray-menu { background: #f1f1f1; color: #171717; border: 1px solid #868686; width: 100%; }
+  .tray-menu div { padding: 11px 19px; font-size: 18px; border-bottom: 1px solid #d6d6d6; }
+  .tray-menu div:last-child { border-bottom: 0; }
+  .tray-menu .pause { color: #176f4c; }
+  footer { margin-top: 38px; display: grid; grid-template-columns: 1fr auto; gap: 40px; align-items: end; padding-top: 30px; border-top: 2px solid var(--line); }
+  .quick { display: flex; flex-wrap: wrap; gap: 12px; }
+  .quick span { padding: 10px 16px; border: 1px solid #394552; color: #d2dae1; font-size: 18px; }
+  .quick b { color: var(--yellow); }
+  .end { text-align: right; }
+  .end strong { display: block; font-size: 24px; }
+  .end span { display: block; margin-top: 7px; color: var(--muted); font-size: 17px; }
+</style>
+</head>
+<body>
+<main class="manual">
+  <div class="gridline"></div>
+  <div class="page">
+    <header>
+      <img class="app-icon" src="../../assets/DropSpot-icon-source.png" alt="DropSpot 图标">
+      <div>
+        <h1>DropSpot</h1>
+        <div class="tagline">低占用的 Windows 活跃文件夹定位工具<br>文件写入后，立即知道它落在哪个目录。</div>
+      </div>
+      <div class="version"><strong>使用说明书 v1.0.7</strong><span>Windows 10 / 11 · 开发者 cslm</span></div>
+    </header>
+
+    <section class="intro">
+      <div><b>不扫描全盘</b><span>基于 NTFS / ReFS 增量事件工作，减少磁盘读取。</span></div>
+      <div><b>新建与更新都记录</b><span>创建文件、重新保存图片或文档，都会刷新对应文件夹。</span></div>
+      <div><b>最快回到现场</b><span>双击目录、展开最近文件，或直接使用全局快捷键。</span></div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><span class="index">01</span><h2>首次使用，只做 3 项设置</h2><span class="rule"></span></div>
+      <div class="setup-grid">
+        <article class="step">
+          <span class="kicker">设置 → 监视硬盘</span><h3>勾选需要监视的盘</h3>
+          <p>只选工作盘即可。勾选状态会保存，下次启动自动恢复。</p>
+          <img class="shot" src="screenshots/04-monitor-drives.jpg" alt="监视硬盘设置">
+        </article>
+        <article class="step">
+          <span class="kicker">设置 → 排除文件夹</span><h3>过滤缓存和临时目录</h3>
+          <p>监视整个盘，再排除噪音目录，通常比逐个添加监视文件夹更省心。</p>
+          <div class="plain-demo">
+            <div class="pathrow">示例 · C:\Windows\Temp</div>
+            <div class="pathrow">D:\Cache</div>
+            <div class="pathrow">项目\.git</div>
+            <p style="margin-top:15px;font-size:17px;color:#778390">排除目录及其子目录不会进入活跃列表。</p>
+          </div>
+        </article>
+        <article class="step">
+          <span class="kicker">设置 → 常规</span><h3>需要时开机自动运行</h3>
+          <p>登录 Windows 后自动监视，并以悬浮窗状态待命。</p>
+          <div class="plain-demo">
+            <div class="check"><span class="box"></span><span>随 Windows 启动</span></div>
+            <p style="font-size:17px;color:#778390;margin-top:18px">暂停监视时，状态灯会变化；再次点击工具栏按钮即可继续。</p>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><span class="index">02</span><h2>活跃文件夹：最近写入的位置永远在最上面</h2><span class="rule"></span></div>
+      <div class="main-workflow">
+        <img class="window-shot" src="screenshots/02-expanded-files.jpg" alt="活跃文件夹及最近文件">
+        <div class="workflow-list">
+          <div class="flow"><span class="flow-num">1</span><b>看最上方卡片</b><span>每当文件新建或重新保存，对应文件夹会按更新时间自动排到顶部。</span></div>
+          <div class="flow"><span class="flow-num">2</span><b>双击文件夹卡片</b><span>直接在资源管理器中打开该目录。主列表最多保留 6 个活跃位置。</span></div>
+          <div class="flow"><span class="flow-num">3</span><b>点击右侧展开箭头</b><span>查看这个文件夹最近更新的 3 个文件；再次点击即可收起。</span></div>
+          <div class="flow"><span class="flow-num">4</span><b>单击文件名</b><span>使用系统默认程序打开文件。右键卡片还能复制路径、收藏或排除。</span></div>
+          <div class="signal"><span class="dot"></span><span><strong>状态灯为绿色：</strong>正在监视</span><span>删除文件不会加入记录</span></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><span class="index">03</span><h2>收藏与钉住：把常用目录固定下来</h2><span class="rule"></span></div>
+      <div class="modes">
+        <article class="mode-card">
+          <h3>收藏文件夹</h3>
+          <p>在活跃卡片右键选择“加入收藏”，或在收藏页底部手动添加目录。收藏自身或子目录更新时，会自动移动到收藏列表第 1 位。</p>
+          <div class="pin-copy">
+            <div>收藏页：双击打开 · 右键复制路径</div>
+            <div>浮窗设置：收藏显示数量 1–14 个</div>
+            <div>排序规则：最新在底部，其余按时间向上展开</div>
+          </div>
+        </article>
+        <article class="mode-card">
+          <h3>钉到浮窗</h3>
+          <p>在文件夹右键菜单选择“钉到浮窗”，它会成为独立快捷图标，不再被下一次活跃目录覆盖。</p>
+          <div class="pin-demo"><div class="folder"></div><div class="arrow"></div><div class="pinned"><div class="folder" style="transform:scale(.72)"></div></div></div>
+          <div class="legend"><div>更新后显示绿色提示点</div><div>打开后自动清除提示</div></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><span class="index">04</span><h2>悬浮窗：桌面上的两格快速入口</h2><span class="rule"></span></div>
+      <div class="modes">
+        <article class="mode-card" style="min-height:430px">
+          <h3>左边：最新活跃文件夹</h3>
+          <p>双击立即打开最新目录。右键可复制路径、加入收藏、钉到浮窗。</p>
+          <div class="floating-crop"><img src="../product-intro-video/qa-floating.png" alt="DropSpot 悬浮窗"></div>
+        </article>
+        <article class="mode-card" style="min-height:430px">
+          <h3>右边：收藏第 1 位</h3>
+          <p>双击打开；单击向上展开收藏快捷栏。拖动外框可移动整组浮窗。</p>
+          <div class="pin-copy" style="margin-top:30px">
+            <div>右键目标：打开 · 复制路径 · 收藏 · 钉住</div>
+            <div>右键空白区：恢复主窗口 · 最小化到任务栏</div>
+            <div>从任务栏恢复：默认回到悬浮窗状态</div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-title"><span class="index">05</span><h2>快捷键与系统托盘</h2><span class="rule"></span></div>
+      <div class="tools">
+        <article class="hotkeys">
+          <div class="hotkey"><div><b>打开最新文件夹</b><span>设置 → 快捷键，可自定义 Ctrl / Alt / Shift + A–Z</span></div><div><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>F</kbd></div></div>
+          <div class="hotkey"><div><b>复制最新文件夹地址</b><span>无需打开主窗口，路径直接进入剪贴板</span></div><div><kbd>Ctrl</kbd><kbd>Alt</kbd><kbd>D</kbd></div></div>
+        </article>
+        <article class="tray">
+          <h3>任务栏右下角 · DropSpot 图标</h3>
+          <div class="tray-menu">
+            <div>恢复主窗口</div><div>打开悬浮窗</div><div class="pause">暂停 / 继续监视</div><div>最近 50 个活动文件夹</div><div>诊断信息</div><div>退出</div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <footer>
+      <div class="quick">
+        <span><b>双击卡片</b> 打开目录</span><span><b>点击箭头</b> 最近 3 个文件</span><span><b>右键卡片</b> 更多操作</span><span><b>绿色灯</b> 正在监视</span><span><b>诊断页</b> 查看磁盘状态和错误</span>
+      </div>
+      <div class="end"><strong>DropSpot v1.0.7</strong><span>低占用 · 不读取文件内容 · 为快速定位而生</span></div>
+    </footer>
+  </div>
+</main>
+</body>
+</html>

@@ -5,16 +5,19 @@ namespace DropSpot;
 
 public sealed class FloatingFolderForm : Form
 {
-    private const int CornerRadius = 12;
     private readonly Action _openLatestFolder;
+    private readonly Action<ChangeRecord> _openFile;
     private readonly Action<string> _openFavoriteFolder;
     private readonly Action _restoreMainWindow;
+    private readonly Action _minimizeMainWindow;
     private readonly Action _toggleMonitoring;
     private readonly Action _exitApplication;
     private readonly Action<string> _copyPath;
     private readonly Action<string> _addFavorite;
+    private readonly Action<string> _pinFolder;
     private readonly Action<Point> _savePosition;
     private readonly Func<bool> _isMonitoring;
+    private readonly Func<string, bool> _isPinned;
     private readonly Panel _surface = new();
     private readonly Panel _activeSegment = new();
     private readonly Panel _favoriteSegment = new();
@@ -22,6 +25,7 @@ public sealed class FloatingFolderForm : Form
     private readonly PictureBox _favoriteIcon = new();
     private readonly Label _activeName = new();
     private readonly Label _favoriteName = new();
+    private readonly Label _activeChevron = new();
     private readonly Label _chevron = new();
     private readonly StatusDot _activeDot = new(Theme.Accent);
     private readonly StatusDot _favoriteDot = new(Color.FromArgb(228, 182, 80));
@@ -30,65 +34,77 @@ public sealed class FloatingFolderForm : Form
     private readonly ToolStripMenuItem _openTargetItem = new();
     private readonly ToolStripMenuItem _copyPathItem = new();
     private readonly ToolStripMenuItem _addFavoriteItem = new();
+    private readonly ToolStripMenuItem _pinFolderItem = new();
     private readonly ToolStripMenuItem _toggleMonitoringItem = new();
     private readonly Font _nameFont = new("Microsoft YaHei UI", 8F, FontStyle.Bold);
     private readonly Font _chevronFont = new("Segoe MDL2 Assets", 8F);
-    private readonly System.Windows.Forms.Timer _highlightTimer = new() { Interval = 700 };
+    private readonly System.Windows.Forms.Timer _activeClickTimer = new();
     private readonly System.Windows.Forms.Timer _favoriteClickTimer = new();
     private readonly System.Windows.Forms.Timer _collapseTimer = new() { Interval = 200 };
+    private readonly System.Windows.Forms.Timer _infoDismissTimer = new() { Interval = 120 };
+    // The backdrop is deliberately click-through. The foreground form owns every
+    // interaction; otherwise a translucent PNG can intermittently intercept clicks.
+    private readonly LayeredImageBackdropForm _backdrop = new();
     private readonly FavoriteQuickMenuForm _quickMenu;
     private readonly FavoriteInfoPopupForm _infoPopup = new();
+    private readonly LatestFileQuickForm _latestFileQuick;
     private IReadOnlyList<FavoriteFolder> _favorites = Array.Empty<FavoriteFolder>();
-    private Color _surfaceColor = AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb);
-    private Color _hoverColor = Theme.HoverForBackground(AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb));
-    private Color _dividerColor = Theme.BorderForBackground(AppSettings.GetFloatingBackgroundColor(AppSettings.DefaultFloatingBackgroundArgb));
-    private double _floatingOpacity = AppSettings.DefaultFloatingOpacityPercent / 100D;
     private Point _dragStart;
     private Point _windowStart;
     private Control? _dragCaptureControl;
     private bool _dragCandidate;
     private bool _dragged;
     private bool _suppressClick;
-    private bool _highlightBorder;
     private string? _latestPath;
+    private Rectangle _infoAnchorBounds;
     private string? _contextTargetPath;
     private bool _contextTargetIsFavorite;
 
     internal int FavoriteCount => _favorites.Count;
+    internal int LatestFileCount => _latestFileQuick.DisplayedFilePath is null ? 0 : 1;
+    internal bool LatestFileCardVisible => _latestFileQuick.Visible;
+    internal bool FavoriteInfoVisible => _infoPopup.Visible;
 
     public FloatingFolderForm(
         Action openLatestFolder,
+        Action<ChangeRecord> openFile,
         Action<string> openFavoriteFolder,
         Action restoreMainWindow,
+        Action minimizeMainWindow,
         Action toggleMonitoring,
         Action exitApplication,
         Action<string> copyPath,
         Action<string> addFavorite,
+        Action<string> pinFolder,
         Action<Point> savePosition,
-        Func<bool> isMonitoring)
+        Func<bool> isMonitoring,
+        Func<string, bool> isPinned)
     {
         _openLatestFolder = openLatestFolder;
+        _openFile = openFile;
         _openFavoriteFolder = openFavoriteFolder;
         _restoreMainWindow = restoreMainWindow;
+        _minimizeMainWindow = minimizeMainWindow;
         _toggleMonitoring = toggleMonitoring;
         _exitApplication = exitApplication;
         _copyPath = copyPath;
         _addFavorite = addFavorite;
+        _pinFolder = pinFolder;
         _savePosition = savePosition;
         _isMonitoring = isMonitoring;
+        _isPinned = isPinned;
 
         FormBorderStyle = FormBorderStyle.None;
         Text = "DropSpot 快捷入口";
         ShowInTaskbar = false;
         TopMost = true;
         StartPosition = FormStartPosition.Manual;
-        Size = new Size(208, 86);
-        BackColor = Color.Black;
-        TransparencyKey = Color.Empty;
-        Opacity = 1D;
+        Size = FloatingFrameAssets.MainFrame.Size;
+        TransparentWindowStyle.ApplyToForeground(this);
         DoubleBuffered = true;
 
         BuildUi();
+        _backdrop.SetImage(FloatingFrameAssets.MainFrame);
         BuildMenu();
         _quickMenu = new FavoriteQuickMenuForm(
             OpenFavoriteFromMenu,
@@ -97,19 +113,18 @@ public sealed class FloatingFolderForm : Form
             ScheduleAutoCollapse,
             PrepareFavoriteContext,
             _menu);
-        ApplyAppearance(_surfaceColor, AppSettings.DefaultFloatingOpacityPercent);
-
+        _latestFileQuick = new LatestFileQuickForm(_openFile, _openFavoriteFolder, _copyPath);
+        _activeClickTimer.Interval = Math.Max(200, SystemInformation.DoubleClickTime);
+        _activeClickTimer.Tick += (_, _) =>
+        {
+            _activeClickTimer.Stop();
+            ToggleLatestFileCard();
+        };
         _favoriteClickTimer.Interval = Math.Max(200, SystemInformation.DoubleClickTime);
         _favoriteClickTimer.Tick += (_, _) =>
         {
             _favoriteClickTimer.Stop();
             ToggleFavoriteMenu();
-        };
-        _highlightTimer.Tick += (_, _) =>
-        {
-            _highlightTimer.Stop();
-            _highlightBorder = false;
-            _surface.Invalidate();
         };
         _collapseTimer.Tick += (_, _) =>
         {
@@ -128,37 +143,44 @@ public sealed class FloatingFolderForm : Form
                 CollapseFavoriteMenu();
             }
         };
+        _infoDismissTimer.Tick += (_, _) =>
+        {
+            if (!_infoAnchorBounds.Contains(Cursor.Position))
+            {
+                HideFavoriteInfo();
+            }
+        };
 
-        LocationChanged += (_, _) => PositionFavoriteMenu();
+        LocationChanged += (_, _) =>
+        {
+            SyncBackdrop();
+            PositionFavoriteMenu();
+            PositionLatestFileCard();
+        };
         Deactivate += (_, _) => ScheduleAutoCollapse();
-        SizeChanged += (_, _) => UpdateRoundedRegion();
-        UpdateRoundedRegion();
-        UpdateLatest(null, monitoring: false);
+        SizeChanged += (_, _) => SyncBackdrop();
+        UpdateLatest(null, null, monitoring: false);
         UpdateFavorites(Array.Empty<FavoriteFolder>());
     }
 
-    public void UpdateLatest(FolderActivity? folder, bool monitoring)
+    public void UpdateLatest(FolderActivity? folder, ChangeRecord? latestFile, bool monitoring)
     {
-        var previousPath = _latestPath;
         _latestPath = folder?.FolderPath;
         _activeName.Text = folder?.DisplayName ?? "暂无记录";
         _activeDot.Active = monitoring && folder is not null;
+        _activeChevron.Visible = latestFile is not null;
+        _latestFileQuick.UpdateFile(latestFile);
+        if (latestFile is null)
+        {
+            _activeChevron.Text = "\uE70D";
+        }
 
         var tip = folder is null
             ? "暂无活跃文件夹，右键可恢复主窗口"
             : $"{folder.DisplayName}\r\n{folder.FolderPath}";
         SetTip(_activeSegment, tip);
         _toolTip.SetToolTip(_activeDot, monitoring ? "监视中" : "已暂停");
-
-        if (Visible
-            && !string.IsNullOrWhiteSpace(_latestPath)
-            && !string.Equals(previousPath, _latestPath, StringComparison.OrdinalIgnoreCase))
-        {
-            _highlightBorder = true;
-            _highlightTimer.Stop();
-            _highlightTimer.Start();
-            _surface.Invalidate();
-        }
+        PositionLatestFileCard();
     }
 
     public void UpdateFavorites(IReadOnlyList<FavoriteFolder> favorites)
@@ -188,36 +210,13 @@ public sealed class FloatingFolderForm : Form
         }
     }
 
-    public void ApplyAppearance(Color backgroundColor, int opacityPercent)
-    {
-        _surfaceColor = AppSettings.GetFloatingBackgroundColor(backgroundColor.ToArgb());
-        _hoverColor = Theme.HoverForBackground(_surfaceColor);
-        _dividerColor = Theme.BorderForBackground(_surfaceColor);
-        _floatingOpacity = AppSettings.NormalizeFloatingOpacityPercent(opacityPercent) / 100D;
-
-        Opacity = 1D;
-        _surface.BackColor = Color.Transparent;
-        _activeSegment.BackColor = Color.Transparent;
-        _favoriteSegment.BackColor = Color.Transparent;
-        var textColor = Theme.TextForBackground(_surfaceColor);
-        var mutedColor = Theme.MutedTextForBackground(_surfaceColor);
-        _activeName.ForeColor = textColor;
-        _favoriteName.ForeColor = textColor;
-        _chevron.ForeColor = mutedColor;
-        _quickMenu.ApplyAppearance(_surfaceColor, opacityPercent);
-        _infoPopup.ApplyAppearance(_surfaceColor, opacityPercent);
-        WindowTint.Apply(this, _surfaceColor, opacityPercent);
-        _surface.Invalidate();
-    }
-
-    internal Color SurfaceColor => _surfaceColor;
-    internal int AppearanceOpacityPercent => (int)Math.Round(_floatingOpacity * 100D);
-
     public void ShowAt(Point? savedLocation)
     {
         Location = FloatingWindowPlacement.Resolve(savedLocation, Size);
         Show();
+        SyncBackdrop();
         BringToFront();
+        _backdrop.ShowBehind(this);
     }
 
     protected override void OnVisibleChanged(EventArgs e)
@@ -225,7 +224,14 @@ public sealed class FloatingFolderForm : Form
         base.OnVisibleChanged(e);
         if (!Visible)
         {
+            _backdrop.Hide();
+            _activeClickTimer.Stop();
+            _latestFileQuick.HideCard();
             CollapseFavoriteMenu();
+        }
+        else
+        {
+            BeginInvoke(SyncBackdrop);
         }
     }
 
@@ -236,33 +242,20 @@ public sealed class FloatingFolderForm : Form
         _ = DwmSetWindowAttribute(Handle, 33, ref noSystemCorner, sizeof(int));
         var noSystemBorder = unchecked((int)0xFFFFFFFE);
         _ = DwmSetWindowAttribute(Handle, 34, ref noSystemBorder, sizeof(int));
-        WindowTint.Apply(this, _surfaceColor, AppearanceOpacityPercent);
-    }
-
-    private void PaintSurface(object? sender, PaintEventArgs e)
-    {
-        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
-        if (_highlightBorder)
-        {
-            var borderBounds = Rectangle.Inflate(_surface.ClientRectangle, -1, -1);
-            using var path = CreateRoundedPath(borderBounds, CornerRadius - 1);
-            using var border = new Pen(Theme.Accent);
-            e.Graphics.DrawPath(border, path);
-        }
-
-        using var divider = new Pen(_dividerColor);
-        e.Graphics.DrawLine(divider, _surface.Width / 2, 8, _surface.Width / 2, _surface.Height - 8);
     }
 
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
-            _highlightTimer.Dispose();
+            _activeClickTimer.Dispose();
             _favoriteClickTimer.Dispose();
             _collapseTimer.Dispose();
+            _infoDismissTimer.Dispose();
+            _backdrop.Dispose();
             _quickMenu.Dispose();
             _infoPopup.Dispose();
+            _latestFileQuick.Dispose();
             _toolTip.Dispose();
             _menu.Dispose();
             _nameFont.Dispose();
@@ -276,11 +269,10 @@ public sealed class FloatingFolderForm : Form
     {
         _surface.Bounds = ClientRectangle;
         _surface.BackColor = Color.Transparent;
-        _surface.Paint += PaintSurface;
         Controls.Add(_surface);
 
-        ConfigureSegment(_activeSegment, new Rectangle(1, 1, 103, 84));
-        ConfigureSegment(_favoriteSegment, new Rectangle(104, 1, 103, 84));
+        ConfigureSegment(_activeSegment, new Rectangle(2, 2, 103, 86));
+        ConfigureSegment(_favoriteSegment, new Rectangle(106, 2, 104, 86));
         _surface.Controls.Add(_activeSegment);
         _surface.Controls.Add(_favoriteSegment);
 
@@ -299,13 +291,10 @@ public sealed class FloatingFolderForm : Form
         _activeSegment.Controls.Add(_activeDot);
         _favoriteSegment.Controls.Add(_favoriteDot);
 
-        _chevron.Font = _chevronFont;
-        _chevron.ForeColor = Theme.Muted;
-        _chevron.BackColor = Color.Transparent;
-        _chevron.Text = "\uE70D";
-        _chevron.TextAlign = ContentAlignment.MiddleCenter;
-        _chevron.Location = new Point(82, 36);
-        _chevron.Size = new Size(14, 14);
+        ConfigureChevron(_activeChevron);
+        _activeSegment.Controls.Add(_activeChevron);
+
+        ConfigureChevron(_chevron);
         _favoriteSegment.Controls.Add(_chevron);
 
         WireDrag(this);
@@ -315,6 +304,7 @@ public sealed class FloatingFolderForm : Form
         foreach (var control in SegmentControls(_activeSegment))
         {
             WireDrag(control);
+            control.MouseClick += HandleActiveMouseClick;
             control.MouseDoubleClick += HandleActiveDoubleClick;
             control.MouseDown += HandleActiveContextMouseDown;
         }
@@ -338,11 +328,14 @@ public sealed class FloatingFolderForm : Form
         _openTargetItem.Click += (_, _) => OpenContextTarget();
         _copyPathItem.Click += (_, _) => CopyContextTarget();
         _addFavoriteItem.Click += (_, _) => AddContextTargetToFavorites();
+        _pinFolderItem.Click += (_, _) => PinContextTarget();
         _menu.Items.Add(_openTargetItem);
         _menu.Items.Add(_copyPathItem);
         _menu.Items.Add(_addFavoriteItem);
+        _menu.Items.Add(_pinFolderItem);
         _menu.Items.Add(new ToolStripSeparator());
         _menu.Items.Add("恢复主窗口", null, (_, _) => _restoreMainWindow());
+        _menu.Items.Add("最小化到任务栏", null, (_, _) => _minimizeMainWindow());
         _toggleMonitoringItem.Click += (_, _) => _toggleMonitoring();
         _menu.Items.Add(_toggleMonitoringItem);
         _menu.Items.Add(new ToolStripSeparator());
@@ -356,6 +349,9 @@ public sealed class FloatingFolderForm : Form
             _copyPathItem.Enabled = hasTarget;
             _addFavoriteItem.Text = _contextTargetIsFavorite ? "已收藏" : "加入收藏";
             _addFavoriteItem.Enabled = hasTarget && !_contextTargetIsFavorite;
+            var pinned = hasTarget && _isPinned(_contextTargetPath!);
+            _pinFolderItem.Text = pinned ? "已钉到浮窗" : "钉到浮窗";
+            _pinFolderItem.Enabled = hasTarget && !pinned;
             _toggleMonitoringItem.Text = _isMonitoring() ? "暂停监视" : "继续监视";
         };
 
@@ -396,6 +392,18 @@ public sealed class FloatingFolderForm : Form
         label.Cursor = Cursors.Hand;
     }
 
+    private void ConfigureChevron(Label label)
+    {
+        label.Font = _chevronFont;
+        label.ForeColor = Theme.Muted;
+        label.BackColor = Color.Transparent;
+        label.Text = "\uE70D";
+        label.TextAlign = ContentAlignment.MiddleCenter;
+        label.Location = new Point(82, 36);
+        label.Size = new Size(14, 14);
+        label.Cursor = Cursors.Hand;
+    }
+
     private static IEnumerable<Control> SegmentControls(Control segment)
     {
         yield return segment;
@@ -419,6 +427,7 @@ public sealed class FloatingFolderForm : Form
             return;
         }
 
+        _activeClickTimer.Stop();
         _favoriteClickTimer.Stop();
         ReleaseDragCapture();
         _dragCaptureControl = sender as Control;
@@ -460,7 +469,7 @@ public sealed class FloatingFolderForm : Form
         if (_dragged)
         {
             Location = _windowStart + delta;
-            _infoPopup.Hide();
+            HideFavoriteInfo();
         }
     }
 
@@ -495,8 +504,21 @@ public sealed class FloatingFolderForm : Form
     {
         if (e.Button == MouseButtons.Left && !_dragged && !string.IsNullOrWhiteSpace(_latestPath))
         {
+            _activeClickTimer.Stop();
+            HideLatestFileCard();
             _openLatestFolder();
         }
+    }
+
+    private void HandleActiveMouseClick(object? sender, MouseEventArgs e)
+    {
+        if (e.Button != MouseButtons.Left || _suppressClick || _dragged || string.IsNullOrWhiteSpace(_latestPath))
+        {
+            return;
+        }
+
+        _activeClickTimer.Stop();
+        _activeClickTimer.Start();
     }
 
     private void HandleFavoriteMouseClick(object? sender, MouseEventArgs e)
@@ -598,8 +620,17 @@ public sealed class FloatingFolderForm : Form
         }
     }
 
+    private void PinContextTarget()
+    {
+        if (!string.IsNullOrWhiteSpace(_contextTargetPath))
+        {
+            _pinFolder(_contextTargetPath);
+        }
+    }
+
     private void ToggleFavoriteMenu()
     {
+        HideLatestFileCard();
         if (_quickMenu.Visible)
         {
             CollapseFavoriteMenu();
@@ -657,9 +688,10 @@ public sealed class FloatingFolderForm : Form
 
     private void CollapseFavoriteMenu()
     {
+        _collapseTimer.Stop();
         _favoriteClickTimer.Stop();
         _quickMenu.Hide();
-        _infoPopup.Hide();
+        HideFavoriteInfo();
         _chevron.Text = "\uE70D";
     }
 
@@ -671,12 +703,52 @@ public sealed class FloatingFolderForm : Form
 
     private void ShowFavoriteInfo(FavoriteFolder favorite, Rectangle anchor)
     {
+        _infoAnchorBounds = anchor;
         _infoPopup.ShowFor(favorite, anchor);
+        _infoDismissTimer.Stop();
+        _infoDismissTimer.Start();
     }
 
     private void HideFavoriteInfo()
     {
+        _infoDismissTimer.Stop();
         _infoPopup.Hide();
+    }
+
+    private void ToggleLatestFileCard()
+    {
+        if (_latestFileQuick.DisplayedFilePath is null)
+        {
+            return;
+        }
+
+        if (_latestFileQuick.Visible)
+        {
+            HideLatestFileCard();
+            return;
+        }
+
+        CollapseFavoriteMenu();
+        PositionLatestFileCard(showIfHidden: true);
+    }
+
+    private void PositionLatestFileCard(bool showIfHidden = false)
+    {
+        if (!Visible || (!_latestFileQuick.Visible && !showIfHidden))
+        {
+            return;
+        }
+
+        var anchor = _activeSegment.RectangleToScreen(_activeSegment.ClientRectangle);
+        _latestFileQuick.ShowAbove(anchor);
+        _activeChevron.Text = "\uE70E";
+    }
+
+    private void HideLatestFileCard()
+    {
+        _activeClickTimer.Stop();
+        _latestFileQuick.HideCard();
+        _activeChevron.Text = "\uE70D";
     }
 
     private void ScheduleAutoCollapse()
@@ -718,44 +790,14 @@ public sealed class FloatingFolderForm : Form
         }
     }
 
-    private void UpdateRoundedRegion()
+    private void SyncBackdrop()
     {
-        _surface.Bounds = ClientRectangle;
-        _surface.Region?.Dispose();
-        _surface.Region = CreateNativeRoundedRegion(_surface.ClientSize, CornerRadius);
-    }
-
-    internal static Region CreateNativeRoundedRegion(Size size, int radius)
-    {
-        var regionHandle = CreateRoundRectRgn(0, 0, size.Width + 1, size.Height + 1, radius * 2, radius * 2);
-        try
+        if (IsDisposed || _backdrop.IsDisposed)
         {
-            return Region.FromHrgn(regionHandle);
-        }
-        finally
-        {
-            _ = DeleteObject(regionHandle);
-        }
-    }
-
-    internal static GraphicsPath CreateRoundedPath(Rectangle bounds, int radius)
-    {
-        var path = new GraphicsPath();
-        if (bounds.Width <= 1 || bounds.Height <= 1)
-        {
-            path.AddRectangle(bounds);
-            return path;
+            return;
         }
 
-        bounds.Width -= 1;
-        bounds.Height -= 1;
-        var diameter = radius * 2;
-        path.AddArc(bounds.Left, bounds.Top, diameter, diameter, 180, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Top, diameter, diameter, 270, 90);
-        path.AddArc(bounds.Right - diameter, bounds.Bottom - diameter, diameter, diameter, 0, 90);
-        path.AddArc(bounds.Left, bounds.Bottom - diameter, diameter, diameter, 90, 90);
-        path.CloseFigure();
-        return path;
+        _backdrop.SyncTo(this);
     }
 
     internal sealed class StatusDot : Control
@@ -788,12 +830,6 @@ public sealed class FloatingFolderForm : Form
             e.Graphics.FillEllipse(brush, 0, 0, Width - 1, Height - 1);
         }
     }
-
-    [DllImport("gdi32.dll")]
-    private static extern IntPtr CreateRoundRectRgn(int left, int top, int right, int bottom, int width, int height);
-
-    [DllImport("gdi32.dll")]
-    private static extern bool DeleteObject(IntPtr handle);
 
     [DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int valueSize);

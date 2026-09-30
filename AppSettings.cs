@@ -7,38 +7,22 @@ public sealed class AppSettings
     public const int DefaultFloatingFavoriteCount = 5;
     public const int MinFloatingFavoriteCount = 1;
     public const int MaxFloatingFavoriteCount = 14;
-    public const int DefaultFloatingBackgroundArgb = unchecked((int)0xFF080C12);
-    public const int DefaultFloatingOpacityPercent = 70;
-    public const int MinFloatingOpacityPercent = 20;
-    public const int MaxFloatingOpacityPercent = 100;
 
     public List<SavedWatchScope> WatchScopes { get; set; } = new();
     public List<string> ExcludedPaths { get; set; } = new();
     public List<SavedFavoriteFolder> FavoriteFolders { get; set; } = new();
+    public List<SavedPinnedFolder> PinnedFolders { get; set; } = new();
+    public List<SavedActivityFolder> ActivityHistory { get; set; } = new();
     public int? FloatingLeft { get; set; }
     public int? FloatingTop { get; set; }
     public int FloatingFavoriteCount { get; set; } = DefaultFloatingFavoriteCount;
-    public int FloatingBackgroundArgb { get; set; } = DefaultFloatingBackgroundArgb;
-    public int FloatingOpacityPercent { get; set; } = DefaultFloatingOpacityPercent;
     public bool StartWithWindows { get; set; }
+    public SavedHotKey OpenLatestFolderHotKey { get; set; } = SavedHotKey.OpenLatestFolderDefault();
+    public SavedHotKey CopyLatestFolderPathHotKey { get; set; } = SavedHotKey.CopyLatestFolderPathDefault();
 
     public static int NormalizeFloatingFavoriteCount(int value)
     {
         return Math.Clamp(value, MinFloatingFavoriteCount, MaxFloatingFavoriteCount);
-    }
-
-    public static int NormalizeFloatingOpacityPercent(int value)
-    {
-        return Math.Clamp(value, MinFloatingOpacityPercent, MaxFloatingOpacityPercent);
-    }
-
-    public static Color GetFloatingBackgroundColor(int argb)
-    {
-        var source = Color.FromArgb(argb);
-        var color = Color.FromArgb(255, source.R, source.G, source.B);
-        return color.ToArgb() == Color.Fuchsia.ToArgb()
-            ? Color.FromArgb(254, 0, 255)
-            : color;
     }
 
     public static AppSettings Load()
@@ -198,6 +182,7 @@ public sealed class AppSettings
         try
         {
             settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(path)) ?? new AppSettings();
+            settings.Normalize();
             return true;
         }
         catch (JsonException)
@@ -218,6 +203,16 @@ public sealed class AppSettings
     {
         File.Copy(path, backupPath, overwrite: true);
         File.Move(tempPath, path, overwrite: true);
+    }
+
+    private void Normalize()
+    {
+        OpenLatestFolderHotKey = SavedHotKey.Normalize(
+            OpenLatestFolderHotKey,
+            SavedHotKey.OpenLatestFolderDefault());
+        CopyLatestFolderPathHotKey = SavedHotKey.Normalize(
+            CopyLatestFolderPathHotKey,
+            SavedHotKey.CopyLatestFolderPathDefault());
     }
 
     private static string SettingsPath =>
@@ -244,4 +239,128 @@ public sealed class SavedFavoriteFolder
     public string Path { get; set; } = string.Empty;
     public DateTime AddedAt { get; set; }
     public DateTime LastActivity { get; set; }
+}
+
+public sealed class SavedPinnedFolder
+{
+    public string Path { get; set; } = string.Empty;
+    public int? Left { get; set; }
+    public int? Top { get; set; }
+    public DateTime PinnedAt { get; set; }
+    public DateTime LastActivity { get; set; }
+    public DateTime LastOpenedAt { get; set; }
+}
+
+public sealed class SavedActivityFolder
+{
+    public string FolderPath { get; set; } = string.Empty;
+    public DateTime LastTime { get; set; }
+    public int ChangeCount { get; set; }
+    public List<SavedActivityFile> Files { get; set; } = new();
+}
+
+public sealed class SavedActivityFile
+{
+    public DateTime Time { get; set; }
+    public string ChangeKind { get; set; } = string.Empty;
+    public string FilePath { get; set; } = string.Empty;
+    public string ScopePath { get; set; } = string.Empty;
+    public string FileName { get; set; } = string.Empty;
+}
+
+public sealed class SavedHotKey
+{
+    public bool Ctrl { get; set; }
+    public bool Alt { get; set; }
+    public bool Shift { get; set; }
+    public string Key { get; set; } = string.Empty;
+
+    public static SavedHotKey OpenLatestFolderDefault() => new()
+    {
+        Ctrl = true,
+        Alt = true,
+        Key = "F"
+    };
+
+    public static SavedHotKey CopyLatestFolderPathDefault() => new()
+    {
+        Ctrl = true,
+        Alt = true,
+        Key = "D"
+    };
+
+    public SavedHotKey Clone() => new()
+    {
+        Ctrl = Ctrl,
+        Alt = Alt,
+        Shift = Shift,
+        Key = Key
+    };
+
+    public bool TryValidate(out string error)
+    {
+        if (!Ctrl && !Alt && !Shift)
+        {
+            error = "至少选择 Ctrl、Alt、Shift 中的一个修饰键";
+            return false;
+        }
+
+        if (!TryGetVirtualKey(out _))
+        {
+            error = "请选择 A-Z 之间的字母";
+            return false;
+        }
+
+        error = string.Empty;
+        return true;
+    }
+
+    public bool TryGetVirtualKey(out uint virtualKey)
+    {
+        var normalized = NormalizeLetter(Key);
+        if (normalized is null)
+        {
+            virtualKey = 0;
+            return false;
+        }
+
+        virtualKey = normalized[0];
+        return true;
+    }
+
+    public bool SameCombination(SavedHotKey other)
+    {
+        return Ctrl == other.Ctrl
+            && Alt == other.Alt
+            && Shift == other.Shift
+            && string.Equals(NormalizeLetter(Key), NormalizeLetter(other.Key), StringComparison.Ordinal);
+    }
+
+    public string DisplayText()
+    {
+        var parts = new List<string>();
+        if (Ctrl) parts.Add("Ctrl");
+        if (Alt) parts.Add("Alt");
+        if (Shift) parts.Add("Shift");
+        parts.Add(NormalizeLetter(Key) ?? "?");
+        return string.Join("+", parts);
+    }
+
+    public static SavedHotKey Normalize(SavedHotKey? value, SavedHotKey fallback)
+    {
+        if (value is null || !value.TryValidate(out _))
+        {
+            return fallback.Clone();
+        }
+
+        var normalized = value.Clone();
+        normalized.Key = NormalizeLetter(normalized.Key)!;
+        return normalized;
+    }
+
+    private static string? NormalizeLetter(string? value)
+    {
+        var trimmed = value?.Trim().ToUpperInvariant();
+        return trimmed is { Length: 1 } && trimmed[0] is >= 'A' and <= 'Z' ? trimmed : null;
+    }
 }

@@ -8,18 +8,26 @@ public sealed class MainForm : Form
     private const int MaxFolders = 6;
     private const int MaxPendingRecords = 512;
     private const int MaxRecordsPerFlush = 128;
+    private const int WmSysCommand = 0x0112;
+    private const int ScRestore = 0xF120;
+    private const int SysCommandMask = 0xFFF0;
     private const string PlayIcon = "\uE768";
     private const string PauseIcon = "\uE769";
     private const string ClearIcon = "\uE74D";
     private const string SettingsIcon = "\uE713";
     private const string AddIcon = "\uE710";
+    private const string FloatingIcon = "\uE8A7";
 
     private readonly FileMonitorService _monitor = new();
     private readonly Dictionary<string, FolderActivity> _folders = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FolderCard> _folderCards = new(StringComparer.OrdinalIgnoreCase);
     private readonly FavoriteFolderStore _favorites = new();
+    private readonly PinnedFolderStore _pinnedFolders = new();
+    private readonly ActivityHistoryStore _activityHistory = new();
     private readonly Dictionary<string, FavoriteFolderCard> _favoriteCards = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, PinnedFolderForm> _pinnedFolderForms = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _expandedFolders = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _openingFolderPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<WatchScope> _watchScopes = new();
     private readonly List<string> _excludedPaths = new();
     private readonly PendingRecordBuffer _pendingRecords = new(MaxPendingRecords);
@@ -36,18 +44,25 @@ public sealed class MainForm : Form
     private readonly Label _favoriteEmptyLabel = new();
     private readonly Button _toggleButton = new();
     private readonly Button _clearButton = new();
+    private readonly Button _openFloatingButton = new();
     private readonly Button _addFavoriteButton = new();
     private readonly Button _activeTabButton = new();
     private readonly Button _favoriteTabButton = new();
     private readonly string? _settingsWarning;
     private readonly bool _startMinimized;
     private FloatingFolderForm? _floatingForm;
+    private TrayIconController? _trayIcon;
+    private GlobalHotKeyManager? _hotKeys;
     private FolderActivity? _latestFolder;
+    private ChangeRecord? _latestFile;
+    private int _latestFileSelectionGeneration;
     private bool _isMonitoring;
     private bool _isClosing;
     private bool _showFavorites;
     private bool _favoritesDirty;
     private bool _floatingModeActive;
+    private bool _wasNativeMinimized;
+    private bool _restoreFloatingAfterTaskbarMinimize;
     private Rectangle _mainWindowRestoreBounds;
     private FormWindowState _mainWindowRestoreState = FormWindowState.Normal;
 
@@ -76,14 +91,25 @@ public sealed class MainForm : Form
         _settingsWarning = settingsWarning;
         _floatingForm = new FloatingFolderForm(
             OpenLatestFolder,
+            OpenFile,
             OpenFolder,
             RestoreMainWindow,
+            MinimizeMainWindow,
             ToggleMonitor,
             Close,
             CopyPath,
             AddFavoritePath,
+            PinFolderPath,
             SaveFloatingPosition,
-            () => _isMonitoring);
+            () => _isMonitoring,
+            _pinnedFolders.Contains);
+        _trayIcon = new TrayIconController(
+            RestoreMainWindow,
+            EnterFloatingMode,
+            ToggleMonitor,
+            ShowActivityHistory,
+            ShowDiagnostics,
+            Close);
         LoadSavedSettings();
         PopulateDrives();
         if (_excludedPaths.Count == 0)
@@ -96,6 +122,7 @@ public sealed class MainForm : Form
         _favoriteSaveTimer.Tick += (_, _) => PersistFavoriteActivity();
         _monitor.Changed += (_, record) => _pendingRecords.Add(record);
         _monitor.MonitorError += (_, message) => ShowMonitorError(message);
+        _monitor.VolumeStatusChanged += (_, status) => OnVolumeStatusChanged(status);
         SizeChanged += (_, _) =>
         {
             if (WindowState == FormWindowState.Minimized && !_isClosing)
@@ -105,11 +132,17 @@ public sealed class MainForm : Form
                     _mainWindowRestoreBounds = RestoreBounds;
                 }
 
-                BeginInvoke(ShowFloatingMode);
+                _wasNativeMinimized = true;
                 return;
             }
 
+            var restoredFromMinimized = _wasNativeMinimized;
+            _wasNativeMinimized = false;
             CaptureMainWindowPlacement();
+            if (restoredFromMinimized && !_floatingModeActive && !_isClosing)
+            {
+                BeginInvoke(RenderCurrentMainView);
+            }
         };
         Move += (_, _) => CaptureMainWindowPlacement();
         FormClosing += (_, _) =>
@@ -120,12 +153,18 @@ public sealed class MainForm : Form
             _favoriteSaveTimer.Stop();
             PersistFavoriteActivity();
             _favoriteSaveTimer.Dispose();
+            _hotKeys?.Dispose();
+            _hotKeys = null;
+            _trayIcon?.Dispose();
+            _trayIcon = null;
             _monitor.Dispose();
+            AppLog.Info("主窗口关闭，监视服务已停止");
             _floatingForm?.Close();
             _floatingForm?.Dispose();
             _floatingForm = null;
             DisposeFolderCards();
             DisposeFavoriteCards();
+            DisposePinnedFolderForms();
             ShellIconProvider.DisposeCache();
         };
         Shown += (_, _) =>
@@ -135,7 +174,7 @@ public sealed class MainForm : Form
             {
                 BeginInvoke(() =>
                 {
-                    StartMonitor(promptIfMissing: false);
+                    _ = StartMonitor(promptIfMissing: false);
                     if (!string.IsNullOrWhiteSpace(_settingsWarning))
                     {
                         SetStatus(_settingsWarning);
@@ -149,7 +188,7 @@ public sealed class MainForm : Form
 
             if (_startMinimized)
             {
-                BeginInvoke(() => WindowState = FormWindowState.Minimized);
+                BeginInvoke(EnterFloatingMode);
             }
         };
         UpdateStatus();
@@ -159,6 +198,33 @@ public sealed class MainForm : Form
     {
         base.OnHandleCreated(e);
         EnableDarkTitleBar();
+        foreach (var error in RegisterConfiguredHotKeys())
+        {
+            AppLog.Warning(error);
+        }
+    }
+
+    protected override void WndProc(ref Message message)
+    {
+        if (_hotKeys?.ProcessMessage(message.Msg, message.WParam) == true)
+        {
+            message.Result = IntPtr.Zero;
+            return;
+        }
+
+        if (!_isClosing
+            && ShouldRestoreFloatingMode(
+                _restoreFloatingAfterTaskbarMinimize,
+                message.Msg,
+                message.WParam))
+        {
+            _restoreFloatingAfterTaskbarMinimize = false;
+            message.Result = IntPtr.Zero;
+            BeginInvoke(EnterFloatingMode);
+            return;
+        }
+
+        base.WndProc(ref message);
     }
 
     internal void ActivateFromExternalRequest()
@@ -244,9 +310,17 @@ public sealed class MainForm : Form
         actionHost.Controls.Add(settingsButton);
         _toolTip.SetToolTip(settingsButton, "设置");
 
+        _openFloatingButton.Name = "openFloatingButton";
+        _openFloatingButton.Text = FloatingIcon;
+        StyleIconButton(_openFloatingButton, primary: false);
+        _openFloatingButton.Location = new Point(126, 1);
+        _openFloatingButton.Click += (_, _) => EnterFloatingMode();
+        actionHost.Controls.Add(_openFloatingButton);
+        _toolTip.SetToolTip(_openFloatingButton, "打开悬浮窗");
+
         void LayoutHeader()
         {
-            const int actionWidth = 118;
+            const int actionWidth = 160;
             actionHost.Bounds = new Rectangle(
                 Math.Max(12, header.ClientSize.Width - 10 - actionWidth),
                 8,
@@ -432,9 +506,17 @@ public sealed class MainForm : Form
         }
 
         _favorites.Load(_settings.FavoriteFolders);
+        _pinnedFolders.Load(_settings.PinnedFolders);
+        _activityHistory.Load(_settings.ActivityHistory);
+        _activityHistory.RemoveWhere(IsExcluded);
+        foreach (var activity in _activityHistory.Items.Take(MaxFolders))
+        {
+            _folders[activity.FolderPath] = activity;
+        }
         UpdateFavoriteTabText();
-        ApplyFloatingAppearance();
         UpdateFloatingFavorites();
+        RenderFolders();
+        UpdateLatestFolder();
     }
 
     private void PopulateDefaultExclusions()
@@ -490,9 +572,10 @@ public sealed class MainForm : Form
             _watchScopes,
             _excludedPaths,
             _settings.FloatingFavoriteCount,
-            _settings.FloatingBackgroundArgb,
-            _settings.FloatingOpacityPercent,
-            _settings.StartWithWindows);
+            _settings.StartWithWindows,
+            ShowDiagnostics,
+            _settings.OpenLatestFolderHotKey,
+            _settings.CopyLatestFolderPathHotKey);
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
             return;
@@ -504,12 +587,34 @@ public sealed class MainForm : Form
         _excludedPaths.Clear();
         _excludedPaths.AddRange(dialog.ExcludedPaths);
         _settings.FloatingFavoriteCount = dialog.FloatingFavoriteCount;
-        _settings.FloatingBackgroundArgb = dialog.FloatingBackgroundArgb;
-        _settings.FloatingOpacityPercent = dialog.FloatingOpacityPercent;
         _settings.StartWithWindows = dialog.StartWithWindows;
+        var previousOpenHotKey = _settings.OpenLatestFolderHotKey.Clone();
+        var previousCopyHotKey = _settings.CopyLatestFolderPathHotKey.Clone();
+        _settings.OpenLatestFolderHotKey = dialog.OpenLatestFolderHotKey;
+        _settings.CopyLatestFolderPathHotKey = dialog.CopyLatestFolderPathHotKey;
+        var hotKeyErrors = RegisterConfiguredHotKeys();
+        if (hotKeyErrors.Count > 0)
+        {
+            _settings.OpenLatestFolderHotKey = previousOpenHotKey;
+            _settings.CopyLatestFolderPathHotKey = previousCopyHotKey;
+            var restoreErrors = RegisterConfiguredHotKeys();
+            foreach (var error in hotKeyErrors.Concat(restoreErrors))
+            {
+                AppLog.Warning(error);
+            }
+
+            var restoreMessage = restoreErrors.Count == 0
+                ? "已恢复原快捷键，其他设置仍会保存。"
+                : "原快捷键恢复失败：" + string.Join("；", restoreErrors);
+            MessageBox.Show(
+                this,
+                string.Join(Environment.NewLine, hotKeyErrors) + Environment.NewLine + restoreMessage,
+                "快捷键冲突",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+        }
         _ = StartupRegistration.TryApply(_settings.StartWithWindows, out var startupError);
         SaveSettings();
-        ApplyFloatingAppearance();
         UpdateFloatingFavorites();
 
         ApplyExclusions();
@@ -544,7 +649,7 @@ public sealed class MainForm : Form
         }
     }
 
-    private void StartMonitor(bool promptIfMissing)
+    private bool StartMonitor(bool promptIfMissing)
     {
         var scopes = _watchScopes.Where(scope => scope.Enabled).ToArray();
         if (scopes.Length == 0)
@@ -554,7 +659,7 @@ public sealed class MainForm : Form
             {
                 OpenSettings();
             }
-            return;
+            return false;
         }
 
         _monitor.Start(scopes, _excludedPaths);
@@ -567,6 +672,7 @@ public sealed class MainForm : Form
         _toggleButton.BackColor = _isMonitoring ? Theme.Panel : Theme.AccentDark;
         _toolTip.SetToolTip(_toggleButton, _isMonitoring ? "暂停监视" : "开始监视");
         UpdateStatus();
+        return _isMonitoring;
     }
 
     private void StopMonitor()
@@ -594,7 +700,9 @@ public sealed class MainForm : Form
     {
         ClearPendingRecords();
         _folders.Clear();
+        _activityHistory.Clear();
         _expandedFolders.Clear();
+        MarkFavoritesDirty();
         RenderFolders();
         UpdateLatestFolder();
         SetStatus("已清空");
@@ -616,6 +724,7 @@ public sealed class MainForm : Form
 
         FolderActivity? latestFolder = null;
         var favoriteActivityChanged = false;
+        var pinnedActivityChanged = false;
         foreach (var record in records)
         {
             var folder = AddRecord(record);
@@ -623,6 +732,10 @@ public sealed class MainForm : Form
             if (folder is not null && _favorites.MarkActivity(record.FolderPath, record.Time))
             {
                 favoriteActivityChanged = true;
+            }
+            if (folder is not null && _pinnedFolders.MarkActivity(record.FolderPath, record.Time))
+            {
+                pinnedActivityChanged = true;
             }
         }
 
@@ -632,6 +745,7 @@ public sealed class MainForm : Form
         }
 
         TrimFolders();
+        MarkFavoritesDirty();
         RenderFolders();
         if (favoriteActivityChanged)
         {
@@ -641,6 +755,10 @@ public sealed class MainForm : Form
             {
                 RenderFavorites();
             }
+        }
+        if (pinnedActivityChanged)
+        {
+            SyncPinnedFolderForms();
         }
         UpdateLatestFolder();
         SetStatus($"{latestFolder.DisplayName}  {latestFolder.LastTime:HH:mm:ss}");
@@ -653,13 +771,11 @@ public sealed class MainForm : Form
             return null;
         }
 
-        if (!_folders.TryGetValue(record.FolderPath, out var folder))
+        var folder = _activityHistory.Add(record);
+        if (!_folders.ContainsKey(record.FolderPath))
         {
-            folder = new FolderActivity(record.FolderPath);
             _folders.Add(record.FolderPath, folder);
         }
-
-        folder.Add(record);
         return folder;
     }
 
@@ -684,7 +800,7 @@ public sealed class MainForm : Form
 
     private void RenderFolders()
     {
-        if (_floatingModeActive || _folderList.IsDisposed)
+        if (ShouldSuspendMainRendering(_floatingModeActive, WindowState) || _folderList.IsDisposed)
         {
             return;
         }
@@ -721,7 +837,9 @@ public sealed class MainForm : Form
                         ExcludeFolder,
                         CopyFolderPath,
                         AddFavorite,
-                        _favorites.Contains);
+                        _favorites.Contains,
+                        PinFolder,
+                        _pinnedFolders.Contains);
                     _folderCards.Add(folder.FolderPath, card);
                     _folderList.Controls.Add(card);
                 }
@@ -748,7 +866,7 @@ public sealed class MainForm : Form
 
     private void RefreshCardTimes()
     {
-        if (_floatingModeActive)
+        if (ShouldSuspendMainRendering(_floatingModeActive, WindowState))
         {
             return;
         }
@@ -782,7 +900,9 @@ public sealed class MainForm : Form
 
     private void RenderFavorites()
     {
-        if (_floatingModeActive || !_showFavorites || _favoriteList.IsDisposed)
+        if (ShouldSuspendMainRendering(_floatingModeActive, WindowState)
+            || !_showFavorites
+            || _favoriteList.IsDisposed)
         {
             return;
         }
@@ -892,6 +1012,55 @@ public sealed class MainForm : Form
         AddFavoritePath(folder.FolderPath);
     }
 
+    private void PinFolder(FolderActivity folder)
+    {
+        PinFolderPath(folder.FolderPath);
+    }
+
+    private void PinFolderPath(string path)
+    {
+        var displayName = GetFolderDisplayName(path);
+        var position = SuggestedPinnedFolderPosition();
+        if (!_pinnedFolders.Pin(path, position))
+        {
+            SetStatus($"已钉住 {displayName}");
+            return;
+        }
+
+        SaveSettings();
+        SyncPinnedFolderForms();
+        SetStatus($"已钉住 {displayName}");
+    }
+
+    private void UnpinFolder(string path)
+    {
+        if (!_pinnedFolders.Remove(path))
+        {
+            return;
+        }
+
+        SaveSettings();
+        SyncPinnedFolderForms();
+        SetStatus($"已取消钉住 {GetFolderDisplayName(path)}");
+    }
+
+    private void SavePinnedFolderPosition(string path, Point location)
+    {
+        if (_pinnedFolders.UpdatePosition(path, location))
+        {
+            SaveSettings();
+        }
+    }
+
+    private Point SuggestedPinnedFolderPosition()
+    {
+        var anchor = _floatingForm?.Visible == true
+            ? _floatingForm.Location
+            : Screen.PrimaryScreen?.WorkingArea.Location ?? Point.Empty;
+        var index = _pinnedFolders.Count;
+        return new Point(anchor.X - 108, anchor.Y - index * 104);
+    }
+
     private void OpenAddFavoriteDialog()
     {
         using var dialog = new AddFavoriteForm();
@@ -980,12 +1149,36 @@ public sealed class MainForm : Form
 
     private void ToggleFolderExpanded(FolderActivity folder)
     {
-        if (!_expandedFolders.Add(folder.FolderPath))
+        var expanded = _expandedFolders.Add(folder.FolderPath);
+        if (!expanded)
         {
             _expandedFolders.Remove(folder.FolderPath);
         }
 
-        RenderFolders();
+        if (_floatingModeActive
+            || !_folderCards.TryGetValue(folder.FolderPath, out var card)
+            || _folderList.IsDisposed)
+        {
+            RenderFolders();
+            return;
+        }
+
+        BeginControlUpdate(_folderList);
+        _folderList.SuspendLayout();
+        try
+        {
+            var width = Math.Max(1, _folderList.ClientSize.Width - 4);
+            var isLatest = string.Equals(
+                _latestFolder?.FolderPath,
+                folder.FolderPath,
+                StringComparison.OrdinalIgnoreCase);
+            card.UpdateActivity(folder, expanded, isLatest, width);
+        }
+        finally
+        {
+            _folderList.ResumeLayout(performLayout: true);
+            EndControlUpdate(_folderList);
+        }
     }
 
     private void ExcludeFolder(FolderActivity folder)
@@ -1001,55 +1194,153 @@ public sealed class MainForm : Form
         Clipboard.SetText(folder.FolderPath);
     }
 
-    private void OpenFile(ChangeRecord record)
+    private async void OpenFile(ChangeRecord record)
     {
-        if (File.Exists(record.FilePath))
+        if (_isClosing || string.IsNullOrWhiteSpace(record.FilePath))
         {
-            Process.Start(new ProcessStartInfo(record.FilePath)
-            {
-                UseShellExecute = true
-            });
             return;
         }
 
-        OpenFolder(record.FolderPath);
+        try
+        {
+            var opened = await Task.Run(() =>
+            {
+                if (!File.Exists(record.FilePath))
+                {
+                    return false;
+                }
+
+                Process.Start(new ProcessStartInfo(record.FilePath)
+                {
+                    UseShellExecute = true
+                });
+                return true;
+            });
+
+            if (!opened)
+            {
+                if (_isClosing || IsDisposed)
+                {
+                    return;
+                }
+
+                SetStatus($"文件不存在或已被移动：{record.FileName}");
+                await RefreshLatestFileAsync(_latestFolder);
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception
+            or InvalidOperationException
+            or UnauthorizedAccessException
+            or IOException)
+        {
+            if (!_isClosing && !IsDisposed)
+            {
+                SetStatus($"打开文件失败：{ex.Message}");
+            }
+        }
     }
 
-    private void OpenFolder(string folderPath)
+    private async void OpenFolder(string folderPath)
     {
-        if (Directory.Exists(folderPath))
+        if (_isClosing || string.IsNullOrWhiteSpace(folderPath))
         {
-            RunExplorer($"\"{folderPath}\"");
             return;
         }
 
-        SetStatus($"文件夹不存在：{folderPath}");
+        string normalizedPath;
+        try
+        {
+            normalizedPath = Path.GetFullPath(folderPath);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            SetStatus($"无法打开文件夹：{ex.Message}");
+            return;
+        }
+
+        if (!_openingFolderPaths.Add(normalizedPath))
+        {
+            return;
+        }
+
+        try
+        {
+            var error = await Task.Run(() =>
+            {
+                if (!Directory.Exists(normalizedPath))
+                {
+                    return $"文件夹不存在或当前不可访问：{normalizedPath}";
+                }
+
+                RunExplorer($"\"{normalizedPath}\"");
+                return (string?)null;
+            });
+
+            if (!string.IsNullOrWhiteSpace(error))
+            {
+                SetStatus(error);
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or UnauthorizedAccessException)
+        {
+            SetStatus($"打开文件夹失败：{ex.Message}");
+        }
+        finally
+        {
+            _openingFolderPaths.Remove(normalizedPath);
+        }
     }
 
     private void OpenLatestFolder()
     {
-        if (_latestFolder is not null && Directory.Exists(_latestFolder.FolderPath))
+        if (_latestFolder is null)
         {
-            OpenFolder(_latestFolder.FolderPath);
+            SetStatus("暂无最新活跃文件夹");
+            return;
+        }
+
+        OpenFolder(_latestFolder.FolderPath);
+    }
+
+    private void CopyLatestFolderPath()
+    {
+        if (_latestFolder is null)
+        {
+            SetStatus("暂无可复制的最新文件夹地址");
+            return;
+        }
+
+        try
+        {
+            Clipboard.SetText(_latestFolder.FolderPath);
+            SetStatus($"已复制：{_latestFolder.FolderPath}");
+        }
+        catch (ExternalException ex)
+        {
+            SetStatus($"复制失败：{ex.Message}");
+            AppLog.Warning($"复制最新文件夹地址失败：{ex.Message}");
         }
     }
 
-    private void ShowFloatingMode()
+    private void EnterFloatingMode()
     {
-        if (_isClosing || WindowState != FormWindowState.Minimized || _floatingForm is null)
+        if (_isClosing || _floatingModeActive || _floatingForm is null)
         {
             return;
         }
 
+        CaptureMainWindowPlacement();
+        _wasNativeMinimized = false;
         ShowInTaskbar = false;
         _floatingModeActive = true;
         Hide();
-        _floatingForm.UpdateLatest(_latestFolder, _isMonitoring);
+        _floatingForm.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
         UpdateFloatingFavorites();
         Point? savedLocation = _settings.FloatingLeft is int left && _settings.FloatingTop is int top
             ? new Point(left, top)
             : null;
         _floatingForm.ShowAt(savedLocation);
+        SyncPinnedFolderForms();
     }
 
     private void RestoreMainWindow()
@@ -1059,12 +1350,15 @@ public sealed class MainForm : Form
             return;
         }
 
+        _restoreFloatingAfterTaskbarMinimize = false;
         var restoreBounds = _mainWindowRestoreBounds;
         var restoreState = _mainWindowRestoreState == FormWindowState.Minimized
             ? FormWindowState.Normal
             : _mainWindowRestoreState;
+        _wasNativeMinimized = false;
         _floatingModeActive = false;
         _floatingForm?.Hide();
+        HidePinnedFolderForms();
         ShowInTaskbar = true;
         Show();
         _ = ShowWindow(Handle, 9);
@@ -1079,6 +1373,35 @@ public sealed class MainForm : Form
         Activate();
     }
 
+    private void MinimizeMainWindow()
+    {
+        if (_isClosing)
+        {
+            return;
+        }
+
+        var restoreBounds = _mainWindowRestoreBounds;
+        var restoreState = _mainWindowRestoreState == FormWindowState.Minimized
+            ? FormWindowState.Normal
+            : _mainWindowRestoreState;
+
+        _floatingModeActive = false;
+        _floatingForm?.Hide();
+        HidePinnedFolderForms();
+
+        ShowInTaskbar = true;
+        WindowState = restoreState;
+        if (restoreState == FormWindowState.Normal && IsUsableWindowBounds(restoreBounds))
+        {
+            Bounds = ClampWindowBounds(restoreBounds);
+        }
+
+        _restoreFloatingAfterTaskbarMinimize = true;
+        _wasNativeMinimized = false;
+        WindowState = FormWindowState.Minimized;
+        Show();
+    }
+
     private void RenderCurrentMainView()
     {
         if (_showFavorites)
@@ -1089,6 +1412,23 @@ public sealed class MainForm : Form
         {
             RenderFolders();
         }
+    }
+
+    internal static bool ShouldSuspendMainRendering(
+        bool floatingModeActive,
+        FormWindowState windowState)
+    {
+        return floatingModeActive || windowState == FormWindowState.Minimized;
+    }
+
+    internal static bool ShouldRestoreFloatingMode(
+        bool restoreFloatingAfterTaskbarMinimize,
+        int message,
+        IntPtr command)
+    {
+        return restoreFloatingAfterTaskbarMinimize
+            && message == WmSysCommand
+            && (command.ToInt64() & SysCommandMask) == ScRestore;
     }
 
     private void CaptureMainWindowPlacement()
@@ -1133,9 +1473,42 @@ public sealed class MainForm : Form
 
     private void UpdateLatestFolder()
     {
+        var previousPath = _latestFolder?.FolderPath;
         _latestFolder = _folders.Values.OrderByDescending(folder => folder.LastTime).FirstOrDefault();
-        _floatingForm?.UpdateLatest(_latestFolder, _isMonitoring);
+        if (!string.Equals(previousPath, _latestFolder?.FolderPath, StringComparison.OrdinalIgnoreCase))
+        {
+            _latestFile = null;
+        }
+
+        _floatingForm?.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
         UpdateFloatingFavorites();
+        _ = RefreshLatestFileAsync(_latestFolder);
+    }
+
+    private async Task RefreshLatestFileAsync(FolderActivity? folder)
+    {
+        var generation = ++_latestFileSelectionGeneration;
+        if (folder is null)
+        {
+            _latestFile = null;
+            _floatingForm?.UpdateLatest(null, null, _isMonitoring);
+            return;
+        }
+
+        var folderPath = folder.FolderPath;
+        var snapshot = folder.Files.ToArray();
+        var selected = await Task.Run(() =>
+            LatestFileSelector.SelectLatestExisting(snapshot, File.Exists));
+
+        if (_isClosing
+            || generation != _latestFileSelectionGeneration
+            || !string.Equals(_latestFolder?.FolderPath, folderPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _latestFile = selected;
+        _floatingForm?.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
     }
 
     private void UpdateFloatingFavorites()
@@ -1144,11 +1517,82 @@ public sealed class MainForm : Form
         _floatingForm?.UpdateFavorites(_favorites.OrderedItems.Take(count).ToArray());
     }
 
-    private void ApplyFloatingAppearance()
+    private void SyncPinnedFolderForms()
     {
-        var color = AppSettings.GetFloatingBackgroundColor(_settings.FloatingBackgroundArgb);
-        var opacity = AppSettings.NormalizeFloatingOpacityPercent(_settings.FloatingOpacityPercent);
-        _floatingForm?.ApplyAppearance(color, opacity);
+        if (_isClosing)
+        {
+            return;
+        }
+
+        var items = _pinnedFolders.Items;
+        var activePaths = items.Select(item => item.Path).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        foreach (var stalePath in _pinnedFolderForms.Keys.Where(path => !activePaths.Contains(path)).ToArray())
+        {
+            var staleForm = _pinnedFolderForms[stalePath];
+            _pinnedFolderForms.Remove(stalePath);
+            staleForm.Hide();
+            staleForm.Dispose();
+        }
+
+        foreach (var item in items)
+        {
+            if (!_pinnedFolderForms.TryGetValue(item.Path, out var form))
+            {
+                form = new PinnedFolderForm(
+                    item,
+                    OpenPinnedFolder,
+                    CopyPath,
+                    AddFavoritePath,
+                    UnpinFolder,
+                    SavePinnedFolderPosition);
+                _pinnedFolderForms.Add(item.Path, form);
+            }
+            else
+            {
+                form.UpdatePinnedFolder(item);
+            }
+
+            if (_floatingModeActive)
+            {
+                if (!form.Visible)
+                {
+                    form.ShowAt(item.Position);
+                }
+            }
+            else
+            {
+                form.Hide();
+            }
+        }
+    }
+
+    private void HidePinnedFolderForms()
+    {
+        foreach (var form in _pinnedFolderForms.Values)
+        {
+            form.Hide();
+        }
+    }
+
+    private void OpenPinnedFolder(string path)
+    {
+        if (_pinnedFolders.MarkOpened(path, DateTime.Now))
+        {
+            SaveSettings();
+            SyncPinnedFolderForms();
+        }
+
+        OpenFolder(path);
+    }
+
+    private void DisposePinnedFolderForms()
+    {
+        foreach (var form in _pinnedFolderForms.Values)
+        {
+            form.Dispose();
+        }
+
+        _pinnedFolderForms.Clear();
     }
 
     private void ApplyExclusions()
@@ -1159,6 +1603,10 @@ public sealed class MainForm : Form
         {
             _folders.Remove(folder);
             _expandedFolders.Remove(folder);
+        }
+        if (_activityHistory.RemoveWhere(IsExcluded) > 0)
+        {
+            MarkFavoritesDirty();
         }
 
         RenderFolders();
@@ -1203,16 +1651,21 @@ public sealed class MainForm : Form
             statusDot.BackColor = _isMonitoring ? Theme.Accent : Theme.Dim;
         }
 
+        var statuses = _monitor.VolumeStatuses;
+        var healthy = statuses.Count(status => status.State == VolumeMonitorState.Healthy);
+        var attention = statuses.Count(status => status.State is VolumeMonitorState.Waiting or VolumeMonitorState.Reconnecting or VolumeMonitorState.Error);
         if (_isMonitoring)
         {
-            SetStatus(drives.Length == 0 ? "监视中" : $"监视中 · {string.Join(" ", drives)}");
+            var suffix = attention > 0 ? $" · {healthy} 正常 / {attention} 待恢复" : string.Empty;
+            SetStatus(drives.Length == 0 ? $"监视中{suffix}" : $"监视中 · {string.Join(" ", drives)}{suffix}");
         }
         else
         {
             SetStatus(drives.Length == 0 ? "未选择硬盘" : $"已选择 · {string.Join(" ", drives)}");
         }
 
-        _floatingForm?.UpdateLatest(_latestFolder, _isMonitoring);
+        _floatingForm?.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
+        _trayIcon?.UpdateMonitoring(_isMonitoring, statuses);
     }
 
     private void SaveSettings()
@@ -1226,6 +1679,8 @@ public sealed class MainForm : Form
             .ToList();
         _settings.ExcludedPaths = _excludedPaths.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         _settings.FavoriteFolders = _favorites.ToSettings();
+        _settings.PinnedFolders = _pinnedFolders.ToSettings();
+        _settings.ActivityHistory = _activityHistory.ToSettings();
         try
         {
             _settings.Save();
@@ -1243,6 +1698,7 @@ public sealed class MainForm : Form
 
     private void ShowMonitorError(string message)
     {
+        AppLog.Warning(message);
         if (IsDisposed || Disposing || !IsHandleCreated)
         {
             return;
@@ -1262,6 +1718,69 @@ public sealed class MainForm : Form
         {
             // The window can lose its handle while a volume task is stopping.
         }
+    }
+
+    private void OnVolumeStatusChanged(VolumeMonitorStatus status)
+    {
+        AppLog.Info($"{status.VolumeRoot} {DiagnosticsSnapshot.StateText(status.State)}：{status.Message}");
+        if (IsDisposed || Disposing || !IsHandleCreated)
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (!IsDisposed && !Disposing)
+                {
+                    _isMonitoring = _monitor.IsRunning;
+                    UpdateStatus();
+                }
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            // The handle may be destroyed while a reconnect session exits.
+        }
+    }
+
+    private void ShowDiagnostics()
+    {
+        using var dialog = new DiagnosticsForm(() => DiagnosticsSnapshot.Create(_monitor.VolumeStatuses));
+        if (Visible && WindowState != FormWindowState.Minimized)
+        {
+            dialog.ShowDialog(this);
+        }
+        else
+        {
+            dialog.ShowDialog();
+        }
+    }
+
+    private void ShowActivityHistory()
+    {
+        using var dialog = new ActivityHistoryForm(() => _activityHistory.Items, OpenFolder);
+        if (Visible && WindowState != FormWindowState.Minimized)
+        {
+            dialog.ShowDialog(this);
+        }
+        else
+        {
+            dialog.ShowDialog();
+        }
+    }
+
+    private IReadOnlyList<string> RegisterConfiguredHotKeys()
+    {
+        _hotKeys?.Dispose();
+        _hotKeys = new GlobalHotKeyManager(
+            Handle,
+            _settings.OpenLatestFolderHotKey,
+            _settings.CopyLatestFolderPathHotKey,
+            OpenLatestFolder,
+            CopyLatestFolderPath);
+        return _hotKeys.Register();
     }
 
     private static void RunExplorer(string arguments)
@@ -1294,7 +1813,6 @@ public sealed class MainForm : Form
 
         _ = SendMessage(control.Handle, 0x000B, new IntPtr(1), IntPtr.Zero);
         control.Invalidate(invalidateChildren: true);
-        control.Update();
     }
 
     private void EnableDarkTitleBar()

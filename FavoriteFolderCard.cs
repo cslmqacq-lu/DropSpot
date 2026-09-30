@@ -16,7 +16,6 @@ public sealed class FavoriteFolderCard : UserControl
     private readonly Font _timeFont = new("Microsoft YaHei UI", 8F);
     private FavoriteFolder _favorite;
     private bool _isLatest;
-    private bool _available;
 
     public FavoriteFolderCard(
         FavoriteFolder favorite,
@@ -49,8 +48,6 @@ public sealed class FavoriteFolderCard : UserControl
         _isLatest = isLatest;
         Width = width;
 
-        var available = Directory.Exists(favorite.Path);
-        _available = available;
         var cardColor = isLatest ? Theme.CardLatest : Theme.Card;
         BackColor = cardColor;
         _icon.BackColor = cardColor;
@@ -61,9 +58,9 @@ public sealed class FavoriteFolderCard : UserControl
         _name.Text = favorite.DisplayName;
         _path.Text = CompactPath(favorite.Path);
         RefreshRelativeTime();
-        _name.ForeColor = available ? Theme.Text : Theme.Dim;
-        _path.ForeColor = available ? Theme.Muted : Theme.Dim;
-        _time.ForeColor = available ? Theme.Muted : Theme.Dim;
+        _name.ForeColor = Theme.Text;
+        _path.ForeColor = Theme.Muted;
+        _time.ForeColor = Theme.Muted;
 
         var textWidth = Math.Max(130, width - 170);
         _name.Width = textWidth;
@@ -78,7 +75,7 @@ public sealed class FavoriteFolderCard : UserControl
 
     public void RefreshRelativeTime()
     {
-        _time.Text = _available ? RelativeTime(_favorite.LastActivity) : "不可用";
+        _time.Text = RelativeTime(_favorite.LastActivity);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -156,10 +153,7 @@ public sealed class FavoriteFolderCard : UserControl
         control.Cursor = Cursors.Hand;
         control.DoubleClick += (_, _) =>
         {
-            if (Directory.Exists(_favorite.Path))
-            {
-                _openFolder(_favorite.Path);
-            }
+            _openFolder(_favorite.Path);
         };
     }
 

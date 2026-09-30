@@ -8,9 +8,12 @@ public sealed class FolderCard : UserControl
     private readonly Action<FolderActivity> _excludeFolder;
     private readonly Action<FolderActivity> _copyFolderPath;
     private readonly Action<FolderActivity> _addFavorite;
+    private readonly Action<FolderActivity> _pinFolder;
     private readonly Func<string, bool> _isFavorite;
+    private readonly Func<string, bool> _isPinned;
     private readonly ContextMenuStrip _menu = new();
     private readonly ToolStripMenuItem _favoriteItem = new();
+    private readonly ToolStripMenuItem _pinItem = new();
     private readonly ToolTip _toolTip = new();
     private readonly Panel _headerRow = new();
     private readonly Panel _filePanel = new();
@@ -40,7 +43,9 @@ public sealed class FolderCard : UserControl
         Action<FolderActivity> excludeFolder,
         Action<FolderActivity> copyFolderPath,
         Action<FolderActivity> addFavorite,
-        Func<string, bool> isFavorite)
+        Func<string, bool> isFavorite,
+        Action<FolderActivity> pinFolder,
+        Func<string, bool> isPinned)
     {
         _folder = folder;
         _isLatest = isLatest;
@@ -51,6 +56,8 @@ public sealed class FolderCard : UserControl
         _copyFolderPath = copyFolderPath;
         _addFavorite = addFavorite;
         _isFavorite = isFavorite;
+        _pinFolder = pinFolder;
+        _isPinned = isPinned;
 
         Margin = new Padding(0, 0, 0, 8);
         BackColor = Theme.Card;
@@ -132,6 +139,8 @@ public sealed class FolderCard : UserControl
         _menu.Items.Add("打开文件夹", null, (_, _) => _openFolder(_folder.FolderPath));
         _favoriteItem.Click += (_, _) => _addFavorite(_folder);
         _menu.Items.Add(_favoriteItem);
+        _pinItem.Click += (_, _) => _pinFolder(_folder);
+        _menu.Items.Add(_pinItem);
         _menu.Items.Add("加入排除", null, (_, _) => _excludeFolder(_folder));
         _menu.Items.Add("复制路径", null, (_, _) => _copyFolderPath(_folder));
         _menu.Opening += (_, _) =>
@@ -139,6 +148,9 @@ public sealed class FolderCard : UserControl
             var favorite = _isFavorite(_folder.FolderPath);
             _favoriteItem.Text = favorite ? "已收藏" : "加入收藏";
             _favoriteItem.Enabled = !favorite;
+            var pinned = _isPinned(_folder.FolderPath);
+            _pinItem.Text = pinned ? "已钉到浮窗" : "钉到浮窗";
+            _pinItem.Enabled = !pinned;
         };
         ContextMenuStrip = _menu;
     }
@@ -287,6 +299,7 @@ public sealed class FolderCard : UserControl
         private readonly Label _name = new();
         private readonly Label _time = new();
         private ChangeRecord? _record;
+        private string? _iconPath;
 
         public FileRow(Action<ChangeRecord> openFile, Font fileFont, Font timeFont)
         {
@@ -342,9 +355,18 @@ public sealed class FolderCard : UserControl
             Panel.Visible = record is not null;
             if (record is not null)
             {
-                _icon.Image = ShellIconProvider.FileIcon(record.FilePath);
+                if (!string.Equals(_iconPath, record.FilePath, StringComparison.OrdinalIgnoreCase))
+                {
+                    _icon.Image = ShellIconProvider.FileIcon(record.FilePath);
+                    _iconPath = record.FilePath;
+                }
                 _name.Text = record.FileName;
                 _time.Text = record.Time.ToString("HH:mm");
+            }
+            else
+            {
+                _icon.Image = null;
+                _iconPath = null;
             }
 
             UpdateWidth(cardWidth);

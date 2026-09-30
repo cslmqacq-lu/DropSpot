@@ -1,5 +1,5 @@
 ﻿#ifndef MyAppVersion
-  #define MyAppVersion "1.0.0"
+  #define MyAppVersion "1.0.7"
 #endif
 
 #define MyAppName "DropSpot"
@@ -8,7 +8,7 @@
 #define PortableDir "..\artifacts\portable\DropSpot_v" + MyAppVersion + "_win-x64"
 
 [Setup]
-AppId={{6D2C8928-58E4-4E33-9E71-00BA91004EF8}
+AppId={{A1C63760-BFBF-4B45-A20E-7B9176B1F4A6}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppVerName={#MyAppName} {#MyAppVersion}
@@ -55,7 +55,7 @@ Name: "{group}\卸载 {#MyAppName}"; Filename: "{uninstallexe}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon; AppUserModelID: "cslm.DropSpot"
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "启动 {#MyAppName} {#MyAppVersion}"; Flags: nowait postinstall skipifsilent
 
 [Code]
 procedure StopProcessByName(const FileName: String);
@@ -69,7 +69,6 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopProcessByName('DiskWriteWatcher.exe');
-  StopProcessByName('DropSpot.exe');
   Result := '';
 end;
 
@@ -80,7 +79,13 @@ begin
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
+var
+  StartupCommand: String;
 begin
   if CurUninstallStep = usUninstall then
-    RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DropSpot');
+  begin
+    if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DropSpot', StartupCommand)
+      and (CompareText(StartupCommand, '"' + ExpandConstant('{app}\{#MyAppExeName}') + '" --startup') = 0) then
+      RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DropSpot');
+  end;
 end;
