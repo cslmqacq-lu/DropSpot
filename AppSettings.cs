@@ -243,6 +243,14 @@ public sealed class SavedFavoriteFolder
     public string Path { get; set; } = string.Empty;
     public DateTime AddedAt { get; set; }
     public DateTime LastActivity { get; set; }
+    /// <summary>归在这个收藏文件夹下、被单独标记收藏的文件。</summary>
+    public List<SavedFavoriteFile> Files { get; set; } = new();
+}
+
+public sealed class SavedFavoriteFile
+{
+    public string Path { get; set; } = string.Empty;
+    public DateTime AddedAt { get; set; }
 }
 
 public sealed class SavedPinnedFolder

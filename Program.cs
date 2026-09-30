@@ -20,7 +20,7 @@ static class Program
             AppLog.Error("后台任务发生未观察异常", eventArgs.Exception);
             eventArgs.SetObserved();
         };
-        AppLog.Info($"DropSpot v{Application.ProductVersion} 启动");
+        AppLog.Info($"DropSpot v{Application.ProductVersion} 启动（{(Elevation.IsElevated ? "管理员" : "普通")}权限）");
 
         if (args.Any(arg => string.Equals(arg, "--ui-smoke-test", StringComparison.OrdinalIgnoreCase)))
         {

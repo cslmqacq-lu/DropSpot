@@ -328,6 +328,34 @@ public static class SmokeTest
             return 157;
         }
 
+        // 收藏文件：归到最深的已收藏上级文件夹；没有时自动收藏父文件夹；可保存 / 恢复
+        var store = new FavoriteFolderStore();
+        store.Add(@"C:\work", now);
+        store.Add(@"C:\work\sub", now);
+        var nested = store.AddFile(@"C:\work\sub\deep\a.txt", now);
+        var created = store.AddFile(@"D:\other\b.txt", now);
+        var duplicate = store.AddFile(@"D:\other\b.txt", now);
+        if (nested.Folder?.Path != @"C:\work\sub" || nested.FolderCreated
+            || created.Folder?.Path != @"D:\other" || !created.FolderCreated
+            || !duplicate.AlreadyFavorite
+            || store.FileCount != 2
+            || store.Count != 3)
+        {
+            return 158;
+        }
+
+        var restored = new FavoriteFolderStore();
+        restored.Load(store.ToSettings());
+        if (restored.FileCount != 2 || !restored.ContainsFile(@"C:\work\sub\deep\a.txt"))
+        {
+            return 159;
+        }
+
+        if (!restored.RemoveFile(@"D:\other\b.txt") || restored.FileCount != 1 || restored.AllFiles[0].RelativeName != @"deep\a.txt")
+        {
+            return 160;
+        }
+
         return 0;
     }
 

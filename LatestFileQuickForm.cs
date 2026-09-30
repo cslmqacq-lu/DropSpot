@@ -242,8 +242,7 @@ internal sealed class LatestFileQuickForm : Form
         _dragCandidate = false;
         _dragged = true;
         ReleaseDragCapture();
-        var data = new DataObject(DataFormats.FileDrop, new[] { dragPath });
-        DoDragDrop(data, DragDropEffects.Copy);
+        ShellFileDrop.DoInternalFileDrag(this, dragPath);
     }
 
     private void HandleMouseUp(object? sender, MouseEventArgs e)

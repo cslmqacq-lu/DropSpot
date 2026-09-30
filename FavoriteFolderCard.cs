@@ -14,6 +14,15 @@ public sealed class FavoriteFolderCard : UserControl
     private readonly Font _nameFont = new("Microsoft YaHei UI", 10F, FontStyle.Bold);
     private readonly Font _pathFont = new("Microsoft YaHei UI", 8F);
     private readonly Font _timeFont = new("Microsoft YaHei UI", 8F);
+    private const int HeaderHeight = 72;
+    private const int FileRowHeight = 24;
+    private const int MaxFileRows = 6;
+    private readonly Action<FavoriteFile, FileCommand> _fileCommand;
+    private readonly Label[] _fileLabels = new Label[MaxFileRows];
+    private readonly Label _moreFilesLabel = new();
+    private readonly ContextMenuStrip _fileMenu = new();
+    private readonly Font _fileFont = new("Microsoft YaHei UI", 8.5F);
+    private FavoriteFile? _fileMenuTarget;
     private FavoriteFolder _favorite;
     private bool _isLatest;
 
@@ -23,14 +32,16 @@ public sealed class FavoriteFolderCard : UserControl
         int width,
         Action<string> openFolder,
         Action<FavoriteFolder> removeFavorite,
-        Action<string> copyPath)
+        Action<string> copyPath,
+        Action<FavoriteFile, FileCommand>? fileCommand = null)
     {
+        _fileCommand = fileCommand ?? ((_, _) => { });
         _favorite = favorite;
         _openFolder = openFolder;
         _removeFavorite = removeFavorite;
         _copyPath = copyPath;
 
-        Height = 72;
+        Height = HeaderHeight;
         Margin = new Padding(0, 0, 0, 8);
         DoubleBuffered = true;
         Cursor = Cursors.Hand;
@@ -62,10 +73,12 @@ public sealed class FavoriteFolderCard : UserControl
         _path.ForeColor = Theme.Muted;
         _time.ForeColor = Theme.Muted;
 
-        var textWidth = Math.Max(130, width - 170);
+        var textWidth = Math.Max(130, width - 182);
         _name.Width = textWidth;
         _path.Width = textWidth;
-        _time.Location = new Point(Math.Max(250, width - 92), 20);
+        _time.Location = new Point(Math.Max(238, width - 104), 20);
+
+        UpdateFiles(favorite, cardColor, width);
 
         _toolTip.SetToolTip(this, favorite.Path);
         _toolTip.SetToolTip(_name, favorite.Path);
@@ -99,6 +112,8 @@ public sealed class FavoriteFolderCard : UserControl
             _nameFont.Dispose();
             _pathFont.Dispose();
             _timeFont.Dispose();
+            _fileMenu.Dispose();
+            _fileFont.Dispose();
         }
 
         base.Dispose(disposing);
@@ -126,8 +141,47 @@ public sealed class FavoriteFolderCard : UserControl
 
         _time.Font = _timeFont;
         _time.TextAlign = ContentAlignment.MiddleRight;
-        _time.Size = new Size(68, 30);
+        _time.Size = new Size(80, 30);
         Controls.Add(_time);
+
+        for (var index = 0; index < _fileLabels.Length; index++)
+        {
+            var label = new Label
+            {
+                AutoEllipsis = true,
+                Font = _fileFont,
+                ForeColor = Theme.Text,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Location = new Point(72, HeaderHeight + index * FileRowHeight),
+                Height = FileRowHeight - 2,
+                Cursor = Cursors.Hand,
+                Visible = false
+            };
+            label.MouseDown += (sender, e) =>
+            {
+                if (sender is Label { Tag: FavoriteFile file })
+                {
+                    _fileMenuTarget = file;
+                }
+            };
+            label.Click += (sender, e) =>
+            {
+                if (e is MouseEventArgs { Button: MouseButtons.Left } && sender is Label { Tag: FavoriteFile file })
+                {
+                    _fileCommand(file, FileCommand.Open);
+                }
+            };
+            _fileLabels[index] = label;
+            Controls.Add(label);
+        }
+
+        _moreFilesLabel.AutoEllipsis = true;
+        _moreFilesLabel.Font = _pathFont;
+        _moreFilesLabel.ForeColor = Theme.Muted;
+        _moreFilesLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _moreFilesLabel.Height = FileRowHeight - 2;
+        _moreFilesLabel.Visible = false;
+        Controls.Add(_moreFilesLabel);
 
         WireDoubleClick(this);
         WireDoubleClick(_icon);
@@ -146,6 +200,66 @@ public sealed class FavoriteFolderCard : UserControl
         {
             control.ContextMenuStrip = _menu;
         }
+
+        _fileMenu.ShowImageMargin = false;
+        AddFileMenuItem("打开", FileCommand.Open);
+        AddFileMenuItem("在文件夹中显示", FileCommand.Reveal);
+        _fileMenu.Items.Add(new ToolStripSeparator());
+        AddFileMenuItem("复制文件", FileCommand.CopyFile);
+        AddFileMenuItem("复制文件路径", FileCommand.CopyPath);
+        _fileMenu.Items.Add(new ToolStripSeparator());
+        AddFileMenuItem("取消收藏", FileCommand.ToggleFavorite);
+        foreach (var label in _fileLabels)
+        {
+            label.ContextMenuStrip = _fileMenu;
+        }
+    }
+
+    private void AddFileMenuItem(string text, FileCommand command)
+    {
+        _fileMenu.Items.Add(text, null, (_, _) =>
+        {
+            if (_fileMenuTarget is not null)
+            {
+                _fileCommand(_fileMenuTarget, command);
+            }
+        });
+    }
+
+    private void UpdateFiles(FavoriteFolder favorite, Color cardColor, int width)
+    {
+        var files = favorite.Files;
+        var shown = Math.Min(files.Count, MaxFileRows);
+        for (var index = 0; index < _fileLabels.Length; index++)
+        {
+            var label = _fileLabels[index];
+            if (index >= shown)
+            {
+                label.Visible = false;
+                label.Tag = null;
+                continue;
+            }
+
+            var file = files[index];
+            var exists = File.Exists(file.Path);
+            label.Tag = file;
+            label.Text = $"★ {file.RelativeName}";
+            label.ForeColor = exists ? Theme.Text : Theme.Dim;
+            label.BackColor = cardColor;
+            label.Width = Math.Max(120, width - 90);
+            label.Visible = true;
+            _toolTip.SetToolTip(label, exists ? file.Path : $"{file.Path}\r\n文件已不存在或已被移动");
+        }
+
+        var hidden = files.Count - shown;
+        _moreFilesLabel.Visible = hidden > 0;
+        _moreFilesLabel.Text = hidden > 0 ? $"还有 {hidden} 个收藏文件" : string.Empty;
+        _moreFilesLabel.BackColor = cardColor;
+        _moreFilesLabel.Location = new Point(72, HeaderHeight + shown * FileRowHeight);
+        _moreFilesLabel.Width = Math.Max(120, width - 90);
+
+        var rows = shown + (hidden > 0 ? 1 : 0);
+        Height = rows == 0 ? HeaderHeight : HeaderHeight + rows * FileRowHeight + 6;
     }
 
     private void WireDoubleClick(Control control)
@@ -168,24 +282,5 @@ public sealed class FavoriteFolderCard : UserControl
         return string.IsNullOrWhiteSpace(parentName) ? folderPath : $"{parentName} \\ {name}";
     }
 
-    private static string RelativeTime(DateTime time)
-    {
-        var span = DateTime.Now - time;
-        if (span.TotalSeconds < 60)
-        {
-            return "刚刚";
-        }
-
-        if (span.TotalMinutes < 60)
-        {
-            return $"{Math.Max(1, (int)span.TotalMinutes)} 分钟";
-        }
-
-        if (span.TotalHours < 24)
-        {
-            return $"{Math.Max(1, (int)span.TotalHours)} 小时";
-        }
-
-        return time.ToString("MM-dd");
-    }
+    private static string RelativeTime(DateTime time) => TimeText.Relative(time);
 }

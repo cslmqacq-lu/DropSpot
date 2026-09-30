@@ -55,6 +55,7 @@ public sealed class MainForm : Form
     private readonly string? _settingsWarning;
     private readonly bool _startMinimized;
     private FloatingFolderForm? _floatingForm;
+    private FavoriteFilesForm? _favoriteFilesForm;
     private TrayIconController? _trayIcon;
     private GlobalHotKeyManager? _hotKeys;
     private FolderActivity? _latestFolder;
@@ -84,6 +85,7 @@ public sealed class MainForm : Form
         AutoScaleMode = AutoScaleMode.Dpi;
 
         BuildUi();
+        ShellFileDrop.EnableOleDrop(this, paths => BeginInvoke(() => HandleDroppedPaths(paths, fromMainWindow: true)));
         _settings = AppSettings.Load(out var settingsWarning);
         var startupApplied = StartupRegistration.TryApply(_settings.StartWithWindows, out var startupError);
         if (!string.IsNullOrWhiteSpace(startupError))
@@ -110,6 +112,10 @@ public sealed class MainForm : Form
             SaveFloatingPosition,
             () => _isMonitoring,
             _pinnedFolders.Contains);
+        _floatingForm.PathsDropped += paths => HandleDroppedPaths(paths, fromMainWindow: false);
+        _floatingForm.LocationChanged += (_, _) => PositionFavoriteFilesForm();
+        _favoriteFilesForm = new FavoriteFilesForm(RunFavoriteFileCommand, ShowFavoriteFilesInMainWindow);
+        _favoriteFilesForm.PathsDropped += paths => HandleDroppedPaths(paths, fromMainWindow: false);
         _trayIcon = new TrayIconController(
             RestoreMainWindow,
             EnterFloatingMode,
@@ -173,6 +179,9 @@ public sealed class MainForm : Form
             DisposeFolderCards();
             DisposeFavoriteCards();
             DisposePinnedFolderForms();
+            _favoriteFilesForm?.Close();
+            _favoriteFilesForm?.Dispose();
+            _favoriteFilesForm = null;
             ShellIconProvider.DisposeCache();
         };
         Shown += (_, _) =>
@@ -206,6 +215,7 @@ public sealed class MainForm : Form
     {
         base.OnHandleCreated(e);
         EnableDarkTitleBar();
+        ShellFileDrop.Enable(this);
         foreach (var error in RegisterConfiguredHotKeys())
         {
             AppLog.Warning(error);
@@ -214,6 +224,17 @@ public sealed class MainForm : Form
 
     protected override void WndProc(ref Message message)
     {
+        if (ShellFileDrop.TryRead(ref message, out var droppedPaths))
+        {
+            if (droppedPaths.Length > 0 && !_isClosing)
+            {
+                var paths = droppedPaths;
+                BeginInvoke(() => HandleDroppedPaths(paths, fromMainWindow: true));
+            }
+
+            return;
+        }
+
         if (_hotKeys?.ProcessMessage(message.Msg, message.WParam) == true)
         {
             message.Result = IntPtr.Zero;
@@ -943,7 +964,8 @@ public sealed class MainForm : Form
                         _favorites.Contains,
                         PinFolder,
                         _pinnedFolders.Contains,
-                        RunFileCommand);
+                        RunFileCommand,
+                        _favorites.ContainsFile);
                     _folderCards.Add(folder.FolderPath, card);
                     _folderList.Controls.Add(card);
                 }
@@ -1038,7 +1060,8 @@ public sealed class MainForm : Form
                         width,
                         OpenFolder,
                         RemoveFavorite,
-                        CopyPath);
+                        CopyPath,
+                        RunFavoriteFileCommand);
                     _favoriteCards.Add(favorite.Path, card);
                     _favoriteList.Controls.Add(card);
                 }
@@ -1220,6 +1243,8 @@ public sealed class MainForm : Form
         UpdateFavoriteTabText();
         UpdateFloatingFavorites();
         RenderFavorites();
+        SyncFavoriteFilesForm();
+        RenderFolders();
         SetStatus($"已移除 {favorite.DisplayName}");
     }
 
@@ -1300,33 +1325,53 @@ public sealed class MainForm : Form
         CopyPath(folder.FolderPath);
     }
 
-    private async void RunFileCommand(ChangeRecord record, FileCommand command)
+    private void RunFileCommand(ChangeRecord record, FileCommand command)
+    {
+        if (command == FileCommand.Open)
+        {
+            OpenFile(record);
+            return;
+        }
+
+        RunPathCommand(record.FilePath, record.FolderPath, command);
+    }
+
+    private void RunFavoriteFileCommand(FavoriteFile file, FileCommand command)
+    {
+        RunPathCommand(file.Path, Path.GetDirectoryName(file.Path) ?? file.FolderPath, command);
+    }
+
+    private async void RunPathCommand(string filePath, string folderPath, FileCommand command)
     {
         if (_isClosing)
         {
             return;
         }
 
+        var fileName = Path.GetFileName(filePath);
         switch (command)
         {
             case FileCommand.Open:
-                OpenFile(record);
+                OpenFilePath(filePath);
+                return;
+            case FileCommand.ToggleFavorite:
+                ToggleFileFavorite(filePath);
                 return;
             case FileCommand.CopyPath:
-                CopyPath(record.FilePath);
+                CopyPath(filePath);
                 return;
             case FileCommand.CopyName:
-                CopyPath(record.FileName);
+                CopyPath(fileName);
                 return;
             case FileCommand.CopyFile:
-                if (!File.Exists(record.FilePath))
+                if (!File.Exists(filePath))
                 {
-                    SetStatus($"文件不存在或已被移动：{record.FileName}");
+                    SetStatus($"文件不存在或已被移动：{fileName}");
                     return;
                 }
 
-                SetStatus(SafeClipboard.TrySetFiles(new[] { record.FilePath }, out var copyError)
-                    ? $"已复制文件：{record.FileName}，可直接粘贴"
+                SetStatus(SafeClipboard.TrySetFiles(new[] { filePath }, out var copyError)
+                    ? $"已复制文件：{fileName}，可直接粘贴"
                     : $"复制失败：{copyError}");
                 return;
         }
@@ -1334,8 +1379,8 @@ public sealed class MainForm : Form
         try
         {
             var done = await Task.Run(() => command == FileCommand.Reveal
-                ? FileActions.TryRevealInExplorer(record.FilePath)
-                : FileActions.TryOpenWith(record.FilePath));
+                ? FileActions.TryRevealInExplorer(filePath)
+                : FileActions.TryOpenWith(filePath));
             if (_isClosing || IsDisposed)
             {
                 return;
@@ -1343,10 +1388,10 @@ public sealed class MainForm : Form
 
             if (!done)
             {
-                SetStatus($"文件不存在或已被移动：{record.FileName}");
+                SetStatus($"文件不存在或已被移动：{fileName}");
                 if (command == FileCommand.Reveal)
                 {
-                    OpenFolder(record.FolderPath);
+                    OpenFolder(folderPath);
                 }
             }
         }
@@ -1528,6 +1573,219 @@ public sealed class MainForm : Form
             string.Equals(item.FolderPath, folderPath.TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase));
     }
 
+    private async void OpenFilePath(string filePath)
+    {
+        if (_isClosing || string.IsNullOrWhiteSpace(filePath))
+        {
+            return;
+        }
+
+        try
+        {
+            var opened = await Task.Run(() =>
+            {
+                if (!File.Exists(filePath))
+                {
+                    return false;
+                }
+
+                Process.Start(new ProcessStartInfo(filePath) { UseShellExecute = true });
+                return true;
+            });
+            if (!opened && !_isClosing && !IsDisposed)
+            {
+                SetStatus($"文件不存在或已被移动：{Path.GetFileName(filePath)}");
+            }
+        }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception
+            or InvalidOperationException
+            or UnauthorizedAccessException
+            or IOException)
+        {
+            if (!_isClosing && !IsDisposed)
+            {
+                SetStatus($"打开文件失败：{ex.Message}");
+            }
+        }
+    }
+
+    /// <summary>
+    /// 处理拖进浮窗 / 主窗口 / 收藏文件小窗口的路径：
+    /// 文件夹直接加入收藏；文件归到最近的已收藏上级文件夹下，没有的话自动收藏它所在的文件夹。
+    /// </summary>
+    private void HandleDroppedPaths(IReadOnlyList<string> paths, bool fromMainWindow)
+    {
+        if (_isClosing || paths.Count == 0)
+        {
+            return;
+        }
+
+        var addedFolders = new List<string>();
+        var addedFiles = new List<string>();
+        var createdFolders = new List<string>();
+        var skipped = 0;
+        var now = DateTime.Now;
+        foreach (var path in paths)
+        {
+            if (Directory.Exists(path))
+            {
+                _folders.TryGetValue(path, out var activity);
+                if (_favorites.Add(path, activity?.LastTime ?? now))
+                {
+                    addedFolders.Add(GetFolderDisplayName(path));
+                }
+                else
+                {
+                    skipped++;
+                }
+            }
+            else if (File.Exists(path))
+            {
+                var result = _favorites.AddFile(path, now);
+                if (result.Folder is null || result.AlreadyFavorite)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                addedFiles.Add(Path.GetFileName(path));
+                if (result.FolderCreated)
+                {
+                    createdFolders.Add(result.Folder.DisplayName);
+                }
+            }
+            else
+            {
+                skipped++;
+            }
+        }
+
+        if (addedFolders.Count + addedFiles.Count > 0)
+        {
+            _favoritesDirty = true;
+            SaveSettings();
+            UpdateFavoriteTabText();
+            UpdateFloatingFavorites();
+            RenderFolders();
+            if (fromMainWindow && !_showFavorites)
+            {
+                SetFolderView(showFavorites: true);
+            }
+            else if (_showFavorites)
+            {
+                RenderFavorites();
+            }
+
+            UpdateEmptyState();
+            SyncFavoriteFilesForm();
+        }
+
+        var parts = new List<string>();
+        if (addedFolders.Count > 0)
+        {
+            parts.Add(addedFolders.Count == 1 ? $"已收藏文件夹 {addedFolders[0]}" : $"已收藏 {addedFolders.Count} 个文件夹");
+        }
+
+        if (addedFiles.Count > 0)
+        {
+            parts.Add(addedFiles.Count == 1 ? $"已收藏文件 {addedFiles[0]}" : $"已收藏 {addedFiles.Count} 个文件");
+        }
+
+        if (createdFolders.Count > 0)
+        {
+            parts.Add($"并自动收藏所在文件夹 {string.Join("、", createdFolders.Distinct())}");
+        }
+
+        if (skipped > 0)
+        {
+            parts.Add($"{skipped} 项已在收藏中或无法访问");
+        }
+
+        SetStatus(string.Join("，", parts));
+    }
+
+    private void ToggleFileFavorite(string filePath)
+    {
+        if (_favorites.ContainsFile(filePath))
+        {
+            _favorites.RemoveFile(filePath);
+            SetStatus($"已取消收藏 {Path.GetFileName(filePath)}");
+        }
+        else
+        {
+            if (!File.Exists(filePath))
+            {
+                SetStatus($"文件不存在或已被移动：{Path.GetFileName(filePath)}");
+                return;
+            }
+
+            var result = _favorites.AddFile(filePath, DateTime.Now);
+            if (result.Folder is null)
+            {
+                return;
+            }
+
+            SetStatus(result.FolderCreated
+                ? $"已收藏 {Path.GetFileName(filePath)}，并自动收藏所在文件夹 {result.Folder.DisplayName}"
+                : $"已收藏 {Path.GetFileName(filePath)}（归入 {result.Folder.DisplayName}）");
+        }
+
+        _favoritesDirty = true;
+        SaveSettings();
+        UpdateFavoriteTabText();
+        UpdateFloatingFavorites();
+        RenderFolders();
+        if (_showFavorites)
+        {
+            RenderFavorites();
+        }
+
+        UpdateEmptyState();
+        SyncFavoriteFilesForm();
+    }
+
+    /// <summary>浮窗模式下、有收藏文件时，在浮窗旁显示收藏文件小窗口。</summary>
+    private void SyncFavoriteFilesForm()
+    {
+        if (_favoriteFilesForm is null || _favoriteFilesForm.IsDisposed || _isClosing)
+        {
+            return;
+        }
+
+        var files = _favorites.AllFiles;
+        var shouldShow = _floatingModeActive
+            && _floatingForm?.Visible == true
+            && files.Count > 0;
+        if (!shouldShow)
+        {
+            _favoriteFilesForm.Hide();
+            return;
+        }
+
+        _favoriteFilesForm.UpdateFiles(files);
+        PositionFavoriteFilesForm();
+        if (!_favoriteFilesForm.Visible)
+        {
+            _favoriteFilesForm.Show();
+        }
+    }
+
+    private void PositionFavoriteFilesForm()
+    {
+        if (_favoriteFilesForm is null || _floatingForm is null || _favoriteFilesForm.IsDisposed)
+        {
+            return;
+        }
+
+        _favoriteFilesForm.PlaceBeside(_floatingForm.Bounds);
+    }
+
+    private void ShowFavoriteFilesInMainWindow()
+    {
+        RestoreMainWindow();
+        SetFolderView(showFavorites: true);
+    }
+
     private void CopyLatestFolderPath()
     {
         if (_latestFolder is null)
@@ -1558,6 +1816,7 @@ public sealed class MainForm : Form
             : null;
         _floatingForm.ShowAt(savedLocation);
         SyncPinnedFolderForms();
+        SyncFavoriteFilesForm();
     }
 
     private void RestoreMainWindow()
@@ -1576,6 +1835,7 @@ public sealed class MainForm : Form
         _floatingModeActive = false;
         _floatingForm?.Hide();
         HidePinnedFolderForms();
+        SyncFavoriteFilesForm();
         ShowInTaskbar = true;
         Show();
         _ = ShowWindow(Handle, 9);
@@ -1605,6 +1865,7 @@ public sealed class MainForm : Form
         _floatingModeActive = false;
         _floatingForm?.Hide();
         HidePinnedFolderForms();
+        SyncFavoriteFilesForm();
 
         ShowInTaskbar = true;
         WindowState = restoreState;

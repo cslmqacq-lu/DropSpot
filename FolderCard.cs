@@ -8,7 +8,9 @@ public enum FileCommand
     OpenWith,
     CopyFile,
     CopyPath,
-    CopyName
+    CopyName,
+    /// <summary>收藏 / 取消收藏这个文件。</summary>
+    ToggleFavorite
 }
 
 public sealed class FolderCard : UserControl
@@ -23,6 +25,8 @@ public sealed class FolderCard : UserControl
     private readonly Func<string, bool> _isFavorite;
     private readonly Func<string, bool> _isPinned;
     private readonly Action<ChangeRecord, FileCommand> _fileCommand;
+    private readonly Func<string, bool> _isFileFavorite;
+    private readonly ToolStripMenuItem _fileFavoriteItem = new();
     private readonly ContextMenuStrip _menu = new();
     private readonly ToolStripMenuItem _favoriteItem = new();
     private readonly ToolStripMenuItem _pinItem = new();
@@ -60,8 +64,10 @@ public sealed class FolderCard : UserControl
         Func<string, bool> isFavorite,
         Action<FolderActivity> pinFolder,
         Func<string, bool> isPinned,
-        Action<ChangeRecord, FileCommand>? fileCommand = null)
+        Action<ChangeRecord, FileCommand>? fileCommand = null,
+        Func<string, bool>? isFileFavorite = null)
     {
+        _isFileFavorite = isFileFavorite ?? (_ => false);
         _folder = folder;
         _isLatest = isLatest;
         _openFolder = openFolder;
@@ -185,6 +191,20 @@ public sealed class FolderCard : UserControl
         AddFileMenuItem("复制文件", FileCommand.CopyFile);
         AddFileMenuItem("复制文件路径", FileCommand.CopyPath);
         AddFileMenuItem("复制文件名", FileCommand.CopyName);
+        _fileMenu.Items.Add(new ToolStripSeparator());
+        _fileFavoriteItem.Click += (_, _) =>
+        {
+            if (_fileMenuTarget is not null)
+            {
+                _fileCommand(_fileMenuTarget, FileCommand.ToggleFavorite);
+            }
+        };
+        _fileMenu.Items.Add(_fileFavoriteItem);
+        _fileMenu.Opening += (_, _) =>
+        {
+            var favorite = _fileMenuTarget is not null && _isFileFavorite(_fileMenuTarget.FilePath);
+            _fileFavoriteItem.Text = favorite ? "取消收藏此文件" : "★ 收藏此文件";
+        };
     }
 
     private void AddFileMenuItem(string text, FileCommand command)
@@ -260,7 +280,7 @@ public sealed class FolderCard : UserControl
 
         for (var index = 0; index < _fileRows.Length; index++)
         {
-            var row = new FileRow(_openFile, SetFileMenuTarget, _fileMenu, _fileFont, _fileTimeFont)
+            var row = new FileRow(_openFile, SetFileMenuTarget, _fileMenu, path => _isFileFavorite(path), _fileFont, _fileTimeFont)
             {
                 Top = 6 + index * 30
             };
@@ -330,6 +350,7 @@ public sealed class FolderCard : UserControl
     {
         private readonly Action<ChangeRecord> _openFile;
         private readonly Action<ChangeRecord> _setMenuTarget;
+        private readonly Func<string, bool> _isFavorite;
         private readonly PictureBox _icon = new();
         private readonly Label _name = new();
         private readonly Label _time = new();
@@ -342,11 +363,13 @@ public sealed class FolderCard : UserControl
             Action<ChangeRecord> openFile,
             Action<ChangeRecord> setMenuTarget,
             ContextMenuStrip fileMenu,
+            Func<string, bool> isFavorite,
             Font fileFont,
             Font timeFont)
         {
             _openFile = openFile;
             _setMenuTarget = setMenuTarget;
+            _isFavorite = isFavorite;
             Panel = new Panel
             {
                 Left = 72,
@@ -452,11 +475,7 @@ public sealed class FolderCard : UserControl
             }
 
             _dragCandidate = false;
-            var data = FileActions.CreateFileDropData(_record.FilePath);
-            if (data is not null)
-            {
-                Panel.DoDragDrop(data, DragDropEffects.Copy);
-            }
+            ShellFileDrop.DoInternalFileDrag(Panel, _record.FilePath);
         }
 
         private void HandleMouseUp(object? sender, MouseEventArgs e)
@@ -493,7 +512,7 @@ public sealed class FolderCard : UserControl
                     _icon.Image = ShellIconProvider.FileIcon(record.FilePath);
                     _iconPath = record.FilePath;
                 }
-                _name.Text = record.FileName;
+                _name.Text = _isFavorite(record.FilePath) ? $"★ {record.FileName}" : record.FileName;
                 _time.Text = TimeText.Clock(record.Time);
             }
             else

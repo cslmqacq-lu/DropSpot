@@ -65,6 +65,9 @@ public sealed class FloatingFolderForm : Form
     internal bool LatestFileCardVisible => _latestFileQuick.Visible;
     internal bool FavoriteInfoVisible => _infoPopup.Visible;
 
+    /// <summary>有文件或文件夹从资源管理器拖到浮窗上。</summary>
+    public event Action<string[]>? PathsDropped;
+
     public FloatingFolderForm(
         Action openLatestFolder,
         Action<ChangeRecord> openFile,
@@ -161,6 +164,7 @@ public sealed class FloatingFolderForm : Form
         SizeChanged += (_, _) => SyncBackdrop();
         UpdateLatest(null, null, monitoring: false);
         UpdateFavorites(Array.Empty<FavoriteFolder>());
+        ShellFileDrop.EnableOleDrop(this, paths => BeginInvoke(() => PathsDropped?.Invoke(paths)));
     }
 
     public void UpdateLatest(FolderActivity? folder, ChangeRecord? latestFile, bool monitoring)
@@ -235,9 +239,25 @@ public sealed class FloatingFolderForm : Form
         }
     }
 
+    protected override void WndProc(ref Message m)
+    {
+        if (ShellFileDrop.TryRead(ref m, out var paths))
+        {
+            if (paths.Length > 0)
+            {
+                PathsDropped?.Invoke(paths);
+            }
+
+            return;
+        }
+
+        base.WndProc(ref m);
+    }
+
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        ShellFileDrop.Enable(this);
         var noSystemCorner = 1;
         _ = DwmSetWindowAttribute(Handle, 33, ref noSystemCorner, sizeof(int));
         var noSystemBorder = unchecked((int)0xFFFFFFFE);
