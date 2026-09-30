@@ -7,16 +7,18 @@ public sealed record DiagnosticsSnapshot(
     DateTime GeneratedAt,
     IReadOnlyList<VolumeMonitorStatus> Volumes,
     IReadOnlyList<string> RecentLogEntries,
-    string LogDirectory)
+    string LogDirectory,
+    string MonitorMode = "")
 {
-    public static DiagnosticsSnapshot Create(IEnumerable<VolumeMonitorStatus> volumes)
+    public static DiagnosticsSnapshot Create(IEnumerable<VolumeMonitorStatus> volumes, string monitorMode = "")
     {
         return new DiagnosticsSnapshot(
             Application.ProductVersion,
             DateTime.Now,
             volumes.OrderBy(item => item.VolumeRoot, StringComparer.OrdinalIgnoreCase).ToArray(),
             AppLog.RecentEntries.TakeLast(20).ToArray(),
-            AppLog.LogDirectory);
+            AppLog.LogDirectory,
+            monitorMode);
     }
 
     public string Format()
@@ -25,7 +27,11 @@ public sealed record DiagnosticsSnapshot(
         text.AppendLine($"DropSpot v{Version}");
         text.AppendLine($"诊断时间：{GeneratedAt:yyyy-MM-dd HH:mm:ss}");
         text.AppendLine($"系统：{Environment.OSVersion}");
-        text.AppendLine($"进程：{Environment.ProcessId} / 64位：{Environment.Is64BitProcess}");
+        text.AppendLine($"进程：{Environment.ProcessId} / 64位：{Environment.Is64BitProcess} / {(Elevation.IsElevated ? "管理员" : "普通")}权限");
+        if (!string.IsNullOrWhiteSpace(MonitorMode))
+        {
+            text.AppendLine($"监视方式：{MonitorMode}");
+        }
         text.AppendLine();
         text.AppendLine("监视卷：");
         if (Volumes.Count == 0)

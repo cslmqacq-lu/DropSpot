@@ -24,7 +24,7 @@ public sealed class TrayIconController : IDisposable
         menu.Items.Add("诊断信息", null, (_, _) => openDiagnostics());
         if (restartElevated is not null)
         {
-            menu.Items.Add("以管理员身份重启", null, (_, _) => restartElevated());
+            menu.Items.Add("授权后台监视", null, (_, _) => restartElevated());
         }
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add("退出 DropSpot", null, (_, _) => exit());

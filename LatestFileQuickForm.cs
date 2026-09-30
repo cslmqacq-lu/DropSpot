@@ -1,5 +1,3 @@
-using System.Runtime.InteropServices;
-
 namespace DropSpot;
 
 internal sealed class LatestFileQuickForm : Form
@@ -127,10 +125,7 @@ internal sealed class LatestFileQuickForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        var noSystemCorner = 1;
-        _ = DwmSetWindowAttribute(Handle, 33, ref noSystemCorner, sizeof(int));
-        var noSystemBorder = unchecked((int)0xFFFFFFFE);
-        _ = DwmSetWindowAttribute(Handle, 34, ref noSystemBorder, sizeof(int));
+        WindowChrome.RemoveSystemFrame(this);
     }
 
     protected override void Dispose(bool disposing)
@@ -333,7 +328,4 @@ internal sealed class LatestFileQuickForm : Form
             _backdrop.SyncTo(this);
         }
     }
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int valueSize);
 }

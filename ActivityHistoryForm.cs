@@ -24,6 +24,12 @@ public sealed class ActivityHistoryForm : Form
         RefreshItems();
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        WindowChrome.ApplyDarkTitleBar(this);
+    }
+
     private void BuildUi()
     {
         var root = new TableLayoutPanel

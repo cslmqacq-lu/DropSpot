@@ -63,6 +63,12 @@ public sealed class SettingsForm : Form
     public SavedHotKey OpenLatestFolderHotKey => _openLatestHotKey.Value;
     public SavedHotKey CopyLatestFolderPathHotKey => _copyLatestPathHotKey.Value;
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        WindowChrome.ApplyDarkTitleBar(this);
+    }
+
     private void BuildUi()
     {
         var root = new TableLayoutPanel
@@ -210,9 +216,7 @@ public sealed class SettingsForm : Form
 
         root.Controls.Add(new Label
         {
-            Text = Elevation.IsElevated
-                ? "登录后以管理员身份自动开始监视，并进入浮窗。"
-                : "登录后自动开始监视并进入浮窗。监视磁盘需要管理员权限，以管理员身份运行一次后会自动改为管理员开机启动。",
+            Text = "登录后自动开始监视并进入浮窗。界面以普通权限运行（拖放不受影响），磁盘监视由已授权的后台进程完成，开机不会弹出授权确认。",
             Dock = DockStyle.Fill,
             ForeColor = Theme.Muted,
             TextAlign = ContentAlignment.TopLeft
@@ -819,6 +823,12 @@ internal sealed class NameRuleInputForm : Form
 
         AcceptButton = ok;
         CancelButton = cancel;
+    }
+
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        WindowChrome.ApplyDarkTitleBar(this);
     }
 
     public string Rule => _input.Text.Trim();

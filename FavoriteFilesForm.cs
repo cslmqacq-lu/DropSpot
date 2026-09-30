@@ -1,5 +1,3 @@
-using System.Runtime.InteropServices;
-
 namespace DropSpot;
 
 /// <summary>
@@ -118,8 +116,7 @@ internal sealed class FavoriteFilesForm : Form
     {
         base.OnHandleCreated(e);
         ShellFileDrop.Enable(this);
-        var roundCorners = 2; // DWMWCP_ROUND，Windows 11 圆角
-        _ = DwmSetWindowAttribute(Handle, 33, ref roundCorners, sizeof(int));
+        WindowChrome.RoundCorners(this);
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -357,7 +354,4 @@ internal sealed class FavoriteFilesForm : Form
             }
         }
     }
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr window, int attribute, ref int value, int valueSize);
 }

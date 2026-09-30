@@ -319,11 +319,21 @@ public static class SmokeTest
             return 156;
         }
 
-        var xml = StartupRegistration.BuildTaskXml(@"C:\Program Files\DropSpot\DropSpot.exe", @"PC\user&co");
+        var xml = ScheduledTasks.BuildElevatedTaskXml(
+            @"C:\Program Files\DropSpot\DropSpot.exe",
+            @"PC\user&co",
+            MonitorAgent.AgentArgument,
+            "DropSpot 后台监视",
+            runAtLogon: false);
+        var logonXml = ScheduledTasks.BuildElevatedTaskXml(@"C:\x\DropSpot.exe", "PC\\u", "--startup", "d", runAtLogon: true);
         if (!xml.Contains("<RunLevel>HighestAvailable</RunLevel>")
             || !xml.Contains("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>")
             || !xml.Contains("user&amp;co")
-            || !xml.StartsWith("<?xml", StringComparison.Ordinal))
+            || !xml.Contains("<Arguments>--monitor-agent</Arguments>")
+            || xml.Contains("<LogonTrigger>")
+            || !logonXml.Contains("<LogonTrigger>")
+            || !xml.StartsWith("<?xml", StringComparison.Ordinal)
+            || !System.Xml.Linq.XDocument.Parse(xml).Root!.Name.LocalName.Equals("Task"))
         {
             return 157;
         }
@@ -354,6 +364,33 @@ public static class SmokeTest
         if (!restored.RemoveFile(@"D:\other\b.txt") || restored.FileCount != 1 || restored.AllFiles[0].RelativeName != @"deep\a.txt")
         {
             return 160;
+        }
+
+        // 后台监视进程与界面之间的消息可以完整往返
+        var sentRecord = new ChangeRecord
+        {
+            Time = now,
+            ChangeKind = "新建",
+            FolderPath = @"G:\下载",
+            FilePath = @"G:\下载\报告.docx",
+            ScopePath = @"G:\",
+            FileName = "报告.docx"
+        };
+        var sentStatus = VolumeMonitorStatus.Waiting(@"G:\") with { State = VolumeMonitorState.Error, AccessDenied = true, Message = "x" };
+        var receivedRecord = System.Text.Json.JsonSerializer.Deserialize<AgentMessage>(
+            System.Text.Json.JsonSerializer.Serialize(AgentMessage.FromRecord(sentRecord)))?.ToRecord();
+        var receivedStatus = System.Text.Json.JsonSerializer.Deserialize<AgentMessage>(
+            System.Text.Json.JsonSerializer.Serialize(AgentMessage.FromStatus(sentStatus)))?.ToStatus();
+        if (receivedRecord is null
+            || receivedRecord.FilePath != sentRecord.FilePath
+            || receivedRecord.Time != sentRecord.Time
+            || receivedRecord.ChangeKind != "新建"
+            || receivedStatus is null
+            || receivedStatus.State != VolumeMonitorState.Error
+            || !receivedStatus.AccessDenied
+            || !MonitorAgent.PipeName.StartsWith("DropSpot.Monitor.", StringComparison.Ordinal))
+        {
+            return 161;
         }
 
         return 0;

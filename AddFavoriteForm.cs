@@ -1,5 +1,3 @@
-using System.Runtime.InteropServices;
-
 namespace DropSpot;
 
 internal sealed class AddFavoriteForm : Form
@@ -29,7 +27,7 @@ internal sealed class AddFavoriteForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        EnableDarkTitleBar();
+        WindowChrome.ApplyDarkTitleBar(this);
     }
 
     protected override void OnShown(EventArgs e)
@@ -197,28 +195,4 @@ internal sealed class AddFavoriteForm : Form
             _errorLabel.Text = string.Empty;
         }
     }
-
-    private void EnableDarkTitleBar()
-    {
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
-        {
-            return;
-        }
-
-        var enabled = 1;
-        if (DwmSetWindowAttribute(Handle, 20, ref enabled, sizeof(int)) != 0)
-        {
-            _ = DwmSetWindowAttribute(Handle, 19, ref enabled, sizeof(int));
-        }
-
-        var captionColor = ColorTranslator.ToWin32(Color.Black);
-        var borderColor = ColorTranslator.ToWin32(Theme.BorderStrong);
-        var textColor = ColorTranslator.ToWin32(Color.White);
-        _ = DwmSetWindowAttribute(Handle, 35, ref captionColor, sizeof(int));
-        _ = DwmSetWindowAttribute(Handle, 34, ref borderColor, sizeof(int));
-        _ = DwmSetWindowAttribute(Handle, 36, ref textColor, sizeof(int));
-    }
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 }

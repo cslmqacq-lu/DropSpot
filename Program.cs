@@ -20,6 +20,14 @@ static class Program
             AppLog.Error("后台任务发生未观察异常", eventArgs.Exception);
             eventArgs.SetObserved();
         };
+        if (args.Any(arg => string.Equals(arg, MonitorAgent.AgentArgument, StringComparison.OrdinalIgnoreCase)))
+        {
+            // 后台监视进程：无界面，只读取 USN 日志并通过命名管道发给界面。
+            Environment.ExitCode = MonitorAgent.Run(
+                install: args.Any(arg => string.Equals(arg, MonitorAgent.InstallArgument, StringComparison.OrdinalIgnoreCase)));
+            return;
+        }
+
         AppLog.Info($"DropSpot v{Application.ProductVersion} 启动（{(Elevation.IsElevated ? "管理员" : "普通")}权限）");
 
         if (args.Any(arg => string.Equals(arg, "--ui-smoke-test", StringComparison.OrdinalIgnoreCase)))

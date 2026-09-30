@@ -18,7 +18,7 @@ public sealed class MainForm : Form
     private const string AddIcon = "\uE710";
     private const string FloatingIcon = "\uE8A7";
 
-    private readonly FileMonitorService _monitor = new();
+    private readonly MonitorHost _monitor = new();
     private readonly Dictionary<string, FolderActivity> _folders = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, FolderCard> _folderCards = new(StringComparer.OrdinalIgnoreCase);
     private readonly FavoriteFolderStore _favorites = new();
@@ -41,6 +41,8 @@ public sealed class MainForm : Form
     private readonly Panel _favoriteHost = new();
     private readonly Label _statusLabel = new();
     private readonly Panel _elevationBanner = new();
+    private readonly Label _elevationMessage = new();
+    private readonly Button _elevationButton = new();
     private TableLayoutPanel? _rootLayout;
     private bool _elevationBannerShown;
     private bool _elevationNoticeShown;
@@ -123,7 +125,7 @@ public sealed class MainForm : Form
             ShowActivityHistory,
             ShowDiagnostics,
             Close,
-            Elevation.IsElevated ? null : RestartAsAdministrator);
+            Elevation.IsElevated ? null : AuthorizeMonitor);
         LoadSavedSettings();
         PopulateDrives();
         if (_excludedPaths.Count == 0)
@@ -137,6 +139,7 @@ public sealed class MainForm : Form
         _monitor.Changed += (_, record) => _pendingRecords.Add(record);
         _monitor.MonitorError += (_, message) => ShowMonitorError(message);
         _monitor.VolumeStatusChanged += (_, status) => OnVolumeStatusChanged(status);
+        _monitor.AgentStateChanged += (_, state) => OnAgentStateChanged(state);
         SizeChanged += (_, _) =>
         {
             if (WindowState == FormWindowState.Minimized && !_isClosing)
@@ -214,7 +217,7 @@ public sealed class MainForm : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        EnableDarkTitleBar();
+        WindowChrome.ApplyDarkTitleBar(this);
         ShellFileDrop.Enable(this);
         foreach (var error in RegisterConfiguredHotKeys())
         {
@@ -486,47 +489,62 @@ public sealed class MainForm : Form
         _elevationBanner.Padding = new Padding(12, 0, 10, 0);
         _elevationBanner.Visible = false;
 
-        var message = new Label
-        {
-            Text = "读取磁盘 USN 日志需要管理员权限，当前无法监视。",
-            ForeColor = Color.FromArgb(253, 224, 138),
-            BackColor = Color.Transparent,
-            TextAlign = ContentAlignment.MiddleLeft,
-            AutoEllipsis = true,
-            Dock = DockStyle.Fill
-        };
+        _elevationMessage.Text = string.Empty;
+        _elevationMessage.ForeColor = Color.FromArgb(253, 224, 138);
+        _elevationMessage.BackColor = Color.Transparent;
+        _elevationMessage.TextAlign = ContentAlignment.MiddleLeft;
+        _elevationMessage.AutoEllipsis = true;
+        _elevationMessage.Dock = DockStyle.Fill;
 
-        var restartButton = new Button
-        {
-            Text = "以管理员重启",
-            Dock = DockStyle.Right,
-            Width = 104,
-            FlatStyle = FlatStyle.Flat,
-            BackColor = Color.FromArgb(120, 88, 20),
-            ForeColor = Color.White,
-            TabStop = false,
-            UseVisualStyleBackColor = false
-        };
-        restartButton.FlatAppearance.BorderColor = Color.FromArgb(180, 132, 30);
-        restartButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(150, 110, 26);
-        restartButton.Click += (_, _) => RestartAsAdministrator();
+        _elevationButton.Text = "授权";
+        _elevationButton.Dock = DockStyle.Right;
+        _elevationButton.Width = 88;
+        _elevationButton.FlatStyle = FlatStyle.Flat;
+        _elevationButton.BackColor = Color.FromArgb(120, 88, 20);
+        _elevationButton.ForeColor = Color.White;
+        _elevationButton.TabStop = false;
+        _elevationButton.UseVisualStyleBackColor = false;
+        _elevationButton.FlatAppearance.BorderColor = Color.FromArgb(180, 132, 30);
+        _elevationButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(150, 110, 26);
+        _elevationButton.Click += (_, _) => AuthorizeMonitor();
 
         var buttonHost = new Panel
         {
             Dock = DockStyle.Right,
-            Width = 110,
+            Width = 94,
             Padding = new Padding(0, 5, 0, 5),
             BackColor = Color.Transparent
         };
-        buttonHost.Controls.Add(restartButton);
-        _elevationBanner.Controls.Add(message);
+        buttonHost.Controls.Add(_elevationButton);
+        _elevationBanner.Controls.Add(_elevationMessage);
         _elevationBanner.Controls.Add(buttonHost);
-        _toolTip.SetToolTip(restartButton, "以管理员身份重新启动 DropSpot，并改为管理员开机启动");
+        _toolTip.SetToolTip(_elevationButton, "确认一次管理员授权，之后后台监视会随 DropSpot 自动启动，不再询问");
     }
 
-    private void UpdateElevationBanner(IReadOnlyList<VolumeMonitorStatus> statuses)
+    /// <summary>后台监视未授权或授权失效时，在主窗口顶部显示提示条（浮窗模式下改用托盘气泡提示一次）。</summary>
+    private void UpdateMonitorBanner(IReadOnlyList<VolumeMonitorStatus> statuses)
     {
-        var show = !Elevation.IsElevated && statuses.Any(status => status.AccessDenied);
+        var wantsMonitoring = _watchScopes.Any(scope => scope.Enabled);
+        string? message = null;
+        var buttonText = "授权";
+        switch (_monitor.AgentState)
+        {
+            case MonitorAgentState.NotAuthorized when wantsMonitoring:
+                message = "磁盘监视需要授权一次（之后开机自动运行，不再询问）";
+                break;
+            case MonitorAgentState.Outdated when wantsMonitoring:
+                message = "程序位置变了，需要重新授权后台监视";
+                buttonText = "重新授权";
+                break;
+            case MonitorAgentState.InProcess when statuses.Any(status => status.AccessDenied):
+                message = "读取磁盘 USN 日志需要管理员权限";
+                break;
+        }
+
+        var show = message is not null;
+        _elevationMessage.Text = message ?? string.Empty;
+        _elevationButton.Text = buttonText;
+        _elevationButton.Visible = _monitor.AgentState != MonitorAgentState.InProcess;
         if (_elevationBannerShown == show || _rootLayout is null)
         {
             return;
@@ -536,31 +554,68 @@ public sealed class MainForm : Form
         _elevationBanner.Visible = show;
         _rootLayout.RowStyles[1].Height = show ? 38 : 0;
 
-        // 悬浮窗模式或开机自启时看不到主窗口，用托盘气泡提示一次。
         if (show && !_elevationNoticeShown && (_floatingModeActive || !Visible))
         {
             _elevationNoticeShown = true;
-            _trayIcon?.ShowNotice(
-                "DropSpot 需要管理员权限",
-                "读取磁盘 USN 日志需要管理员权限，点击此处以管理员身份重启。");
+            _trayIcon?.ShowNotice("DropSpot 磁盘监视需要授权", $"{message}。点击此处授权。");
         }
     }
 
-    private void RestartAsAdministrator()
+    private void AuthorizeMonitor()
     {
         if (_isClosing)
         {
             return;
         }
 
-        if (Elevation.TryStartElevatedInstance(_floatingModeActive, out var error))
+        if (_monitor.RequestAuthorization(out var error))
         {
-            AppLog.Info("以管理员身份重启 DropSpot");
-            Close();
+            SetStatus("已提交授权，正在启动后台监视…");
+            AppLog.Info("用户授权后台监视");
+            if (!_isMonitoring && _watchScopes.Any(scope => scope.Enabled))
+            {
+                StartMonitor(promptIfMissing: false);
+            }
+
             return;
         }
 
-        SetStatus(string.IsNullOrWhiteSpace(error) ? "以管理员身份重启失败" : error);
+        SetStatus(string.IsNullOrWhiteSpace(error) ? "授权失败" : $"授权失败：{error}");
+    }
+
+    private string MonitorModeText() => _monitor.AgentState switch
+    {
+        MonitorAgentState.InProcess => "界面进程内（管理员权限）",
+        MonitorAgentState.Connected => "后台监视进程（已连接）",
+        MonitorAgentState.Starting => "后台监视进程（启动中）",
+        MonitorAgentState.Disconnected => "后台监视进程（已断开，自动重连）",
+        MonitorAgentState.NotAuthorized => "后台监视进程（未授权）",
+        MonitorAgentState.Outdated => "后台监视进程（需重新授权）",
+        _ => "未启动"
+    };
+
+    private void OnAgentStateChanged(MonitorAgentState state)
+    {
+        AppLog.Info($"后台监视状态：{state}");
+        if (IsDisposed || Disposing || !IsHandleCreated)
+        {
+            return;
+        }
+
+        try
+        {
+            BeginInvoke(() =>
+            {
+                if (!IsDisposed && !Disposing)
+                {
+                    UpdateStatus();
+                }
+            });
+        }
+        catch (InvalidOperationException)
+        {
+            // 窗口正在关闭。
+        }
     }
 
     private static void ConfigureTabButton(Button button, string text, bool selected)
@@ -796,6 +851,16 @@ public sealed class MainForm : Form
         _toggleButton.BackColor = _isMonitoring ? Theme.Panel : Theme.AccentDark;
         _toolTip.SetToolTip(_toggleButton, _isMonitoring ? "暂停监视" : "开始监视");
         UpdateStatus();
+
+        // 用户主动点“开始监视”且从未授权过：直接弹出一次授权确认。
+        if (promptIfMissing
+            && _isMonitoring
+            && !Elevation.IsElevated
+            && !ScheduledTasks.Exists(MonitorAgent.TaskName))
+        {
+            AuthorizeMonitor();
+        }
+
         return _isMonitoring;
     }
 
@@ -2108,7 +2173,19 @@ public sealed class MainForm : Form
         var statuses = _monitor.VolumeStatuses;
         var healthy = statuses.Count(status => status.State == VolumeMonitorState.Healthy);
         var attention = statuses.Count(status => status.State is VolumeMonitorState.Waiting or VolumeMonitorState.Reconnecting or VolumeMonitorState.Error);
-        if (_isMonitoring)
+        var agentNote = _monitor.AgentState switch
+        {
+            MonitorAgentState.NotAuthorized => "等待授权",
+            MonitorAgentState.Outdated => "需要重新授权",
+            MonitorAgentState.Starting => "正在启动后台监视",
+            MonitorAgentState.Disconnected => "后台监视已断开，正在重连",
+            _ => null
+        };
+        if (_isMonitoring && agentNote is not null)
+        {
+            SetStatus($"监视未就绪 · {agentNote}");
+        }
+        else if (_isMonitoring)
         {
             var suffix = attention > 0 ? $" · {healthy} 正常 / {attention} 待恢复" : string.Empty;
             SetStatus(drives.Length == 0 ? $"监视中{suffix}" : $"监视中 · {string.Join(" ", drives)}{suffix}");
@@ -2120,7 +2197,7 @@ public sealed class MainForm : Form
 
         _floatingForm?.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
         _trayIcon?.UpdateMonitoring(_isMonitoring, statuses);
-        UpdateElevationBanner(statuses);
+        UpdateMonitorBanner(statuses);
     }
 
     private void SaveSettings()
@@ -2202,7 +2279,7 @@ public sealed class MainForm : Form
 
     private void ShowDiagnostics()
     {
-        using var dialog = new DiagnosticsForm(() => DiagnosticsSnapshot.Create(_monitor.VolumeStatuses));
+        using var dialog = new DiagnosticsForm(() => DiagnosticsSnapshot.Create(_monitor.VolumeStatuses, MonitorModeText()));
         if (Visible && WindowState != FormWindowState.Minimized)
         {
             dialog.ShowDialog(this);
@@ -2269,30 +2346,6 @@ public sealed class MainForm : Form
         _ = SendMessage(control.Handle, 0x000B, new IntPtr(1), IntPtr.Zero);
         control.Invalidate(invalidateChildren: true);
     }
-
-    private void EnableDarkTitleBar()
-    {
-        if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 17763))
-        {
-            return;
-        }
-
-        var enabled = 1;
-        if (DwmSetWindowAttribute(Handle, 20, ref enabled, sizeof(int)) != 0)
-        {
-            _ = DwmSetWindowAttribute(Handle, 19, ref enabled, sizeof(int));
-        }
-
-        var captionColor = ColorTranslator.ToWin32(Color.Black);
-        var borderColor = ColorTranslator.ToWin32(Theme.BorderStrong);
-        var textColor = ColorTranslator.ToWin32(Color.White);
-        _ = DwmSetWindowAttribute(Handle, 35, ref captionColor, sizeof(int));
-        _ = DwmSetWindowAttribute(Handle, 34, ref borderColor, sizeof(int));
-        _ = DwmSetWindowAttribute(Handle, 36, ref textColor, sizeof(int));
-    }
-
-    [DllImport("dwmapi.dll")]
-    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int dwAttribute, ref int pvAttribute, int cbAttribute);
 
     [DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr hWnd, int msg, IntPtr wParam, IntPtr lParam);

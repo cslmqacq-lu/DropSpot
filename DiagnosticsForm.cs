@@ -23,6 +23,12 @@ public sealed class DiagnosticsForm : Form
         RefreshSnapshot();
     }
 
+    protected override void OnHandleCreated(EventArgs e)
+    {
+        base.OnHandleCreated(e);
+        WindowChrome.ApplyDarkTitleBar(this);
+    }
+
     private void BuildUi()
     {
         var root = new TableLayoutPanel

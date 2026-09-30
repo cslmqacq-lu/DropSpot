@@ -31,16 +31,11 @@ internal static class Elevation
             || exception is Win32Exception { NativeErrorCode: 5 };
     }
 
-    /// <summary>
-    /// 以管理员身份启动一个新的 DropSpot。成功后调用方应尽快退出当前进程。
-    /// </summary>
-    public static bool TryStartElevatedInstance(bool startInFloatingMode, out string? error)
+    /// <summary>以管理员身份启动 DropSpot 的另一个实例（会弹出一次 UAC 确认）。</summary>
+    public static bool TryStartElevated(string arguments, out string? error)
     {
         error = null;
         var executable = Environment.ProcessPath ?? Application.ExecutablePath;
-        var arguments = startInFloatingMode
-            ? $"{WaitPreviousArgument} --startup"
-            : WaitPreviousArgument;
         try
         {
             Process.Start(new ProcessStartInfo(executable, arguments)
@@ -58,7 +53,7 @@ internal static class Elevation
         catch (Exception ex) when (ex is Win32Exception or InvalidOperationException)
         {
             error = ex.Message;
-            AppLog.Warning($"以管理员身份重启失败：{ex.Message}");
+            AppLog.Warning($"以管理员身份启动失败：{ex.Message}");
             return false;
         }
     }

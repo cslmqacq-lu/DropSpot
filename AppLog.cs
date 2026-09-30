@@ -13,7 +13,10 @@ public static class AppLog
         "DropSpot",
         "logs");
 
-    public static string CurrentLogPath => Path.Combine(LogDirectory, "DropSpot.log");
+    /// <summary>日志文件名；后台监视进程使用独立文件，避免两个进程同时写一个文件。</summary>
+    public static string FileName { get; set; } = "DropSpot.log";
+
+    public static string CurrentLogPath => Path.Combine(LogDirectory, FileName);
 
     public static IReadOnlyList<string> RecentEntries
     {
