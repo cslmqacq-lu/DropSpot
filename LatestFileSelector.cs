@@ -19,6 +19,6 @@ public static class LatestFileSelector
     /// <summary>与监视服务使用同一套临时文件规则（见 <see cref="PathRules.IsTemporaryFileName"/>）。</summary>
     public static bool IsTemporaryFile(string filePath)
     {
-        return PathRules.IsTemporaryFileName(filePath);
+        return PathRules.IsHiddenFromRecent(filePath);
     }
 }

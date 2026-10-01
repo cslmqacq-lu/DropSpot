@@ -14,9 +14,9 @@ public sealed class TrayIconController : IDisposable
         Action exit,
         Action? restartElevated = null)
     {
-        var menu = new ContextMenuStrip { ShowImageMargin = false };
-        menu.Items.Add("恢复主窗口", null, (_, _) => restoreMain());
-        menu.Items.Add("打开悬浮窗", null, (_, _) => openFloating());
+        var menu = DarkMenuRenderer.CreateMenu();
+        menu.Items.Add("展开面板", null, (_, _) => restoreMain());
+        menu.Items.Add("显示悬浮舱", null, (_, _) => openFloating());
         menu.Items.Add(new ToolStripSeparator());
         _toggleMonitoringItem = new ToolStripMenuItem("暂停监视", null, (_, _) => toggleMonitoring());
         menu.Items.Add(_toggleMonitoringItem);
@@ -36,7 +36,13 @@ public sealed class TrayIconController : IDisposable
             ContextMenuStrip = menu,
             Visible = true
         };
-        _icon.DoubleClick += (_, _) => openFloating();
+        _icon.MouseClick += (_, e) =>
+        {
+            if (e.Button == MouseButtons.Left)
+            {
+                restoreMain();
+            }
+        };
         if (restartElevated is not null)
         {
             _icon.BalloonTipClicked += (_, _) => restartElevated();

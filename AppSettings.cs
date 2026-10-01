@@ -7,6 +7,9 @@ public sealed class AppSettings
     public const int DefaultFloatingFavoriteCount = 5;
     public const int MinFloatingFavoriteCount = 1;
     public const int MaxFloatingFavoriteCount = 14;
+    public const int DefaultCapsuleOpacity = 88;
+    public const int MinCapsuleOpacity = 50;
+    public const int MaxCapsuleOpacity = 100;
 
     public List<SavedWatchScope> WatchScopes { get; set; } = new();
     public List<string> ExcludedPaths { get; set; } = new();
@@ -21,12 +24,23 @@ public sealed class AppSettings
     public bool FilterCommonNoise { get; set; } = true;
     /// <summary>打开活跃文件夹时，在资源管理器中选中最新的文件。</summary>
     public bool SelectLatestFileWhenOpeningFolder { get; set; } = true;
+    /// <summary>隐藏开发 / AI 编程产生的文件（编译产物、缓存、日志、锁文件、obj 目录）。</summary>
+    public bool FilterDevFiles { get; set; } = true;
+    /// <summary>用户额外隐藏的扩展名，如 ".tmp"、".log"。</summary>
+    public List<string> HiddenExtensions { get; set; } = new();
+    /// <summary>悬浮舱背景不透明度（百分比，50–100）。文字始终不透明。</summary>
+    public int CapsuleOpacity { get; set; } = DefaultCapsuleOpacity;
     public SavedHotKey OpenLatestFolderHotKey { get; set; } = SavedHotKey.OpenLatestFolderDefault();
     public SavedHotKey CopyLatestFolderPathHotKey { get; set; } = SavedHotKey.CopyLatestFolderPathDefault();
 
     public static int NormalizeFloatingFavoriteCount(int value)
     {
         return Math.Clamp(value, MinFloatingFavoriteCount, MaxFloatingFavoriteCount);
+    }
+
+    public static int NormalizeCapsuleOpacity(int value)
+    {
+        return Math.Clamp(value, MinCapsuleOpacity, MaxCapsuleOpacity);
     }
 
     public static AppSettings Load()
@@ -211,6 +225,7 @@ public sealed class AppSettings
 
     private void Normalize()
     {
+        CapsuleOpacity = NormalizeCapsuleOpacity(CapsuleOpacity);
         OpenLatestFolderHotKey = SavedHotKey.Normalize(
             OpenLatestFolderHotKey,
             SavedHotKey.OpenLatestFolderDefault());

@@ -140,8 +140,32 @@ internal static class MonitorAgent
             return;
         }
 
-        if (!IsTrustedServer(pipe))
+        if (!IsTrustedServer(pipe, out var serverPath))
         {
+            if (serverPath is not null
+                && string.Equals(Path.GetFileName(serverPath), "DropSpot.exe", StringComparison.OrdinalIgnoreCase))
+            {
+                // 对端是另一个位置的 DropSpot（比如刚安装的新版）：只告诉它“任务指向这里”，
+                // 让它提示重新授权；不接收任何指令、不发送任何文件活动。
+                AppLog.Warning($"后台监视任务属于 {ExecutablePath}，界面来自 {serverPath}，需要重新授权");
+                try
+                {
+                    using var notice = new StreamWriter(pipe, Utf8, bufferSize: 1024, leaveOpen: true) { AutoFlush = true };
+                    notice.WriteLine(JsonSerializer.Serialize(new AgentMessage
+                    {
+                        Type = AgentMessage.Hello,
+                        ExePath = ExecutablePath,
+                        Version = Application.ProductVersion
+                    }));
+                    pipe.WaitForPipeDrain();
+                }
+                catch (Exception ex) when (ex is IOException or ObjectDisposedException or InvalidOperationException)
+                {
+                }
+
+                return;
+            }
+
             AppLog.Warning("管道对端不是本机的 DropSpot 程序，已拒绝连接");
             return;
         }
@@ -238,12 +262,14 @@ internal static class MonitorAgent
             {
                 case AgentMessage.Config:
                     monitor.FilterCommonNoise = message.FilterNoise;
+                    PathRules.ConfigureFileFilter(message.FilterDev, message.HiddenExtensions);
                     monitor.Start(
                         (message.Scopes ?? new List<string>()).Select(path => new WatchScope(path)),
                         message.Excluded ?? new List<string>());
                     break;
                 case AgentMessage.Exclusions:
                     monitor.FilterCommonNoise = message.FilterNoise;
+                    PathRules.ConfigureFileFilter(message.FilterDev, message.HiddenExtensions);
                     monitor.SetExcludedPaths(message.Excluded ?? new List<string>());
                     break;
                 case AgentMessage.StopMonitor:
@@ -257,8 +283,9 @@ internal static class MonitorAgent
     }
 
     /// <summary>校验管道服务端进程就是与本进程相同路径的 DropSpot.exe。</summary>
-    private static bool IsTrustedServer(NamedPipeClientStream pipe)
+    private static bool IsTrustedServer(NamedPipeClientStream pipe, out string? serverPath)
     {
+        serverPath = null;
         try
         {
             if (!GetNamedPipeServerProcessId(pipe.SafePipeHandle, out var processId))
@@ -267,7 +294,7 @@ internal static class MonitorAgent
             }
 
             using var process = Process.GetProcessById((int)processId);
-            var serverPath = process.MainModule?.FileName;
+            serverPath = process.MainModule?.FileName;
             return !string.IsNullOrWhiteSpace(serverPath)
                 && string.Equals(Path.GetFullPath(serverPath), Path.GetFullPath(ExecutablePath), StringComparison.OrdinalIgnoreCase);
         }
@@ -304,6 +331,8 @@ internal sealed class AgentMessage
     public List<string>? Scopes { get; set; }
     public List<string>? Excluded { get; set; }
     public bool FilterNoise { get; set; } = true;
+    public bool FilterDev { get; set; } = true;
+    public List<string>? HiddenExtensions { get; set; }
 
     // change
     public DateTime Time { get; set; }

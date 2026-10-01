@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace DropSpot;
 
-public sealed class MainForm : Form
+public sealed class MainForm : Form, ICapsuleHost
 {
     private const int MaxFolders = 6;
     private const int MaxPendingRecords = 512;
@@ -56,8 +56,9 @@ public sealed class MainForm : Form
     private readonly Button _favoriteTabButton = new();
     private readonly string? _settingsWarning;
     private readonly bool _startMinimized;
-    private FloatingFolderForm? _floatingForm;
-    private FavoriteFilesForm? _favoriteFilesForm;
+    private CapsuleForm? _floatingForm;
+    private bool _hostInitialized;
+    private string _capsuleStatus = "未开始监视";
     private TrayIconController? _trayIcon;
     private GlobalHotKeyManager? _hotKeys;
     private FolderActivity? _latestFolder;
@@ -77,6 +78,7 @@ public sealed class MainForm : Form
     {
         _startMinimized = startMinimized;
         Text = $"DropSpot v{Application.ProductVersion}";
+        ShowInTaskbar = false;
         Icon = AppIcon.Create();
         MinimumSize = new Size(460, 500);
         Size = new Size(500, 610);
@@ -100,24 +102,9 @@ public sealed class MainForm : Form
         }
 
         _settingsWarning = settingsWarning;
-        _floatingForm = new FloatingFolderForm(
-            OpenLatestFolder,
-            OpenFile,
-            OpenActivityFolder,
-            RestoreMainWindow,
-            MinimizeMainWindow,
-            ToggleMonitor,
-            Close,
-            CopyPath,
-            AddFavoritePath,
-            PinFolderPath,
-            SaveFloatingPosition,
-            () => _isMonitoring,
-            _pinnedFolders.Contains);
-        _floatingForm.PathsDropped += paths => HandleDroppedPaths(paths, fromMainWindow: false);
-        _floatingForm.LocationChanged += (_, _) => PositionFavoriteFilesForm();
-        _favoriteFilesForm = new FavoriteFilesForm(RunFavoriteFileCommand, ShowFavoriteFilesInMainWindow);
-        _favoriteFilesForm.PathsDropped += paths => HandleDroppedPaths(paths, fromMainWindow: false);
+        // 悬浮舱就是界面；MainForm 只作为不可见的宿主（托盘、快捷键、监视和数据）。
+        _floatingForm = new CapsuleForm(this);
+        _floatingForm.SetBackgroundOpacity(_settings.CapsuleOpacity);
         _trayIcon = new TrayIconController(
             RestoreMainWindow,
             EnterFloatingMode,
@@ -182,36 +169,49 @@ public sealed class MainForm : Form
             DisposeFolderCards();
             DisposeFavoriteCards();
             DisposePinnedFolderForms();
-            _favoriteFilesForm?.Close();
-            _favoriteFilesForm?.Dispose();
-            _favoriteFilesForm = null;
             ShellIconProvider.DisposeCache();
         };
-        Shown += (_, _) =>
+        UpdateStatus();
+    }
+
+    /// <summary>主窗口不再显示：第一次显示请求时只创建句柄，然后进入悬浮舱。</summary>
+    protected override void SetVisibleCore(bool value)
+    {
+        if (!_hostInitialized)
         {
-            CaptureMainWindowPlacement();
-            if (_watchScopes.Any(scope => scope.Enabled))
+            _hostInitialized = true;
+            if (!IsHandleCreated)
             {
-                BeginInvoke(() =>
-                {
-                    _ = StartMonitor(promptIfMissing: false);
-                    if (!string.IsNullOrWhiteSpace(_settingsWarning))
-                    {
-                        SetStatus(_settingsWarning);
-                    }
-                });
-            }
-            else if (!string.IsNullOrWhiteSpace(_settingsWarning))
-            {
-                SetStatus(_settingsWarning);
+                CreateHandle();
             }
 
-            if (_startMinimized)
-            {
-                BeginInvoke(EnterFloatingMode);
-            }
-        };
-        UpdateStatus();
+            base.SetVisibleCore(false);
+            BeginInvoke(InitializeHost);
+            return;
+        }
+
+        base.SetVisibleCore(false);
+    }
+
+    private void InitializeHost()
+    {
+        EnterFloatingMode();
+        if (_watchScopes.Any(scope => scope.Enabled))
+        {
+            _ = StartMonitor(promptIfMissing: false);
+        }
+
+        PushCapsule();
+        if (!_startMinimized)
+        {
+            // 手动启动时展开一次，让用户看到悬浮舱在哪里；开机自启则保持收起。
+            _floatingForm?.ExpandPinned();
+        }
+
+        if (!string.IsNullOrWhiteSpace(_settingsWarning))
+        {
+            SetStatus(_settingsWarning);
+        }
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -679,6 +679,7 @@ public sealed class MainForm : Form
         }
 
         _monitor.FilterCommonNoise = _settings.FilterCommonNoise;
+        _monitor.SetFileFilter(_settings.FilterDevFiles, _settings.HiddenExtensions);
         _favorites.Load(_settings.FavoriteFolders);
         _pinnedFolders.Load(_settings.PinnedFolders);
         _activityHistory.Load(_settings.ActivityHistory);
@@ -751,11 +752,20 @@ public sealed class MainForm : Form
             _settings.OpenLatestFolderHotKey,
             _settings.CopyLatestFolderPathHotKey,
             _settings.FilterCommonNoise,
-            _settings.SelectLatestFileWhenOpeningFolder);
-        if (dialog.ShowDialog(this) != DialogResult.OK)
+            _settings.SelectLatestFileWhenOpeningFolder,
+            _settings.FilterDevFiles,
+            _settings.HiddenExtensions,
+            _settings.CapsuleOpacity,
+            value => _floatingForm?.SetBackgroundOpacity(value));
+        if (ShowOwnedDialog(dialog) != DialogResult.OK)
         {
+            // 取消：撤销透明度的实时预览
+            _floatingForm?.SetBackgroundOpacity(_settings.CapsuleOpacity);
             return;
         }
+
+        _settings.CapsuleOpacity = AppSettings.NormalizeCapsuleOpacity(dialog.CapsuleOpacity);
+        _floatingForm?.SetBackgroundOpacity(_settings.CapsuleOpacity);
 
         _watchScopes.Clear();
         _watchScopes.AddRange(dialog.WatchScopes.Select(scope => new WatchScope(scope.Path, scope.Enabled)));
@@ -766,7 +776,10 @@ public sealed class MainForm : Form
         _settings.StartWithWindows = dialog.StartWithWindows;
         _settings.FilterCommonNoise = dialog.FilterCommonNoise;
         _settings.SelectLatestFileWhenOpeningFolder = dialog.SelectLatestFileWhenOpeningFolder;
+        _settings.FilterDevFiles = dialog.FilterDevFiles;
+        _settings.HiddenExtensions = PathRules.ParseExtensions(dialog.HiddenExtensions).ToList();
         _monitor.FilterCommonNoise = _settings.FilterCommonNoise;
+        _monitor.SetFileFilter(_settings.FilterDevFiles, _settings.HiddenExtensions);
         var previousOpenHotKey = _settings.OpenLatestFolderHotKey.Clone();
         var previousCopyHotKey = _settings.CopyLatestFolderPathHotKey.Clone();
         _settings.OpenLatestFolderHotKey = dialog.OpenLatestFolderHotKey;
@@ -786,7 +799,7 @@ public sealed class MainForm : Form
                 ? "已恢复原快捷键，其他设置仍会保存。"
                 : "原快捷键恢复失败：" + string.Join("；", restoreErrors);
             MessageBox.Show(
-                this,
+                DialogOwner,
                 string.Join(Environment.NewLine, hotKeyErrors) + Environment.NewLine + restoreMessage,
                 "快捷键冲突",
                 MessageBoxButtons.OK,
@@ -950,7 +963,7 @@ public sealed class MainForm : Form
             SyncPinnedFolderForms();
         }
         UpdateLatestFolder();
-        SetStatus($"{latestFolder.DisplayName}  {latestFolder.LastTime:HH:mm:ss}");
+        _statusLabel.Text = $"{latestFolder.DisplayName}  {latestFolder.LastTime:HH:mm:ss}";
     }
 
     private FolderActivity? AddRecord(ChangeRecord record)
@@ -1256,7 +1269,7 @@ public sealed class MainForm : Form
     private void OpenAddFavoriteDialog()
     {
         using var dialog = new AddFavoriteForm();
-        if (dialog.ShowDialog(this) != DialogResult.OK)
+        if (ShowOwnedDialog(dialog) != DialogResult.OK)
         {
             return;
         }
@@ -1809,47 +1822,163 @@ public sealed class MainForm : Form
         SyncFavoriteFilesForm();
     }
 
-    /// <summary>浮窗模式下、有收藏文件时，在浮窗旁显示收藏文件小窗口。</summary>
     private void SyncFavoriteFilesForm()
     {
-        if (_favoriteFilesForm is null || _favoriteFilesForm.IsDisposed || _isClosing)
-        {
-            return;
-        }
-
-        var files = _favorites.AllFiles;
-        var shouldShow = _floatingModeActive
-            && _floatingForm?.Visible == true
-            && files.Count > 0;
-        if (!shouldShow)
-        {
-            _favoriteFilesForm.Hide();
-            return;
-        }
-
-        _favoriteFilesForm.UpdateFiles(files);
-        PositionFavoriteFilesForm();
-        if (!_favoriteFilesForm.Visible)
-        {
-            _favoriteFilesForm.Show();
-        }
+        PushCapsule();
     }
 
-    private void PositionFavoriteFilesForm()
+    // =====================================================================
+    // 悬浮舱宿主（ICapsuleHost）
+    // =====================================================================
+
+    /// <summary>把当前数据整理成悬浮舱快照：最新文件（跨文件夹）、活跃文件夹、收藏夹、收藏文件和状态。</summary>
+    private void PushCapsule()
     {
-        if (_favoriteFilesForm is null || _floatingForm is null || _favoriteFilesForm.IsDisposed)
+        if (_floatingForm is null || _isClosing)
         {
             return;
         }
 
-        _favoriteFilesForm.PlaceBeside(_floatingForm.Bounds);
+        var now = DateTime.Now;
+        var freshWindow = TimeSpan.FromMinutes(10);
+        var latest = _latestFolder;
+        var recent = _folders.Values
+            .SelectMany(folder => folder.Files)
+            .Where(record => !PathRules.IsHiddenFromRecent(record.FilePath))
+            .OrderByDescending(record => record.Time)
+            .DistinctBy(record => record.FilePath, StringComparer.OrdinalIgnoreCase)
+            .Take(8)
+            .Where(record => SafeFileExists(record.FilePath))
+            .Take(3)
+            .Select(record => new CapsuleFile(record.FilePath, record.FolderPath, GetFolderDisplayName(record.FolderPath), record.Time, true))
+            .ToArray();
+        var active = _folders.Values
+            .OrderByDescending(folder => folder.LastTime)
+            .Select(folder => new CapsuleFolder(folder.FolderPath, folder.DisplayName, now - folder.LastTime < freshWindow))
+            .ToArray();
+        var favorites = _favorites.OrderedItems
+            .Select(favorite => new CapsuleFolder(favorite.Path, favorite.DisplayName, now - favorite.LastActivity < freshWindow))
+            .ToArray();
+        var starred = _favorites.AllFiles
+            .Select(file => new CapsuleFile(file.Path, file.FolderPath, GetFolderDisplayName(file.FolderPath), file.AddedAt, SafeFileExists(file.Path)))
+            .ToArray();
+        var wantsMonitoring = _watchScopes.Any(scope => scope.Enabled);
+        var needsAuthorization = wantsMonitoring
+            && _monitor.AgentState is MonitorAgentState.NotAuthorized or MonitorAgentState.Outdated;
+        var outdated = _monitor.AgentState == MonitorAgentState.Outdated;
+        _floatingForm.UpdateSnapshot(new CapsuleSnapshot(
+            latest?.FolderPath,
+            latest?.DisplayName ?? "暂无记录",
+            latest?.LastTime,
+            latest?.ChangeCount ?? 0,
+            recent,
+            active,
+            favorites,
+            starred,
+            _isMonitoring && !needsAuthorization,
+            _capsuleStatus,
+            needsAuthorization,
+            outdated ? "程序位置变了，需要重新授权" : "磁盘监视需要授权一次",
+            outdated ? "重新授权" : "授权"));
     }
 
-    private void ShowFavoriteFilesInMainWindow()
+    private static bool SafeFileExists(string path)
     {
-        RestoreMainWindow();
-        SetFolderView(showFavorites: true);
+        try
+        {
+            return File.Exists(path);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException)
+        {
+            return false;
+        }
     }
+
+    void ICapsuleHost.OpenLatestFolder() => OpenLatestFolder();
+
+    void ICapsuleHost.OpenActivityFolderPath(string folderPath) => OpenActivityFolder(folderPath);
+
+    void ICapsuleHost.RunFileCommandForPath(string filePath, FileCommand command)
+    {
+        RunPathCommand(filePath, Path.GetDirectoryName(filePath) ?? filePath, command);
+    }
+
+    ContextMenuStrip ICapsuleHost.BuildFolderMenu(string folderPath, bool isFavorite)
+    {
+        var menu = DarkMenuRenderer.CreateMenu();
+        var favorite = _favorites.Contains(folderPath);
+        menu.Items.Add("打开并选中最新文件", null, (_, _) => OpenActivityFolder(folderPath));
+        menu.Items.Add("在资源管理器中打开", null, (_, _) => OpenFolder(folderPath));
+        menu.Items.Add("复制路径", null, (_, _) => CopyPath(folderPath));
+        menu.Items.Add(new ToolStripSeparator());
+        if (favorite)
+        {
+            menu.Items.Add("取消收藏", null, (_, _) =>
+            {
+                var item = _favorites.OrderedItems.FirstOrDefault(entry => string.Equals(entry.Path, folderPath, StringComparison.OrdinalIgnoreCase));
+                if (item is not null)
+                {
+                    RemoveFavorite(item);
+                }
+            });
+        }
+        else
+        {
+            menu.Items.Add("★ 加入收藏", null, (_, _) => AddFavoritePath(folderPath));
+        }
+
+        var pinned = _pinnedFolders.Contains(folderPath);
+        menu.Items.Add(new ToolStripMenuItem(pinned ? "已钉到桌面" : "钉到桌面", null, (_, _) => PinFolderPath(folderPath)) { Enabled = !pinned });
+        if (!isFavorite)
+        {
+            menu.Items.Add(new ToolStripSeparator());
+            menu.Items.Add("不再显示这个文件夹（加入排除）", null, (_, _) =>
+            {
+                AddExcludePath(folderPath);
+                SaveSettings();
+                ApplyExclusions();
+                SetStatus($"已排除 {GetFolderDisplayName(folderPath)}");
+            });
+        }
+
+        return menu;
+    }
+
+    ContextMenuStrip ICapsuleHost.BuildFileMenu(string filePath)
+    {
+        var menu = DarkMenuRenderer.CreateMenu();
+        var folder = Path.GetDirectoryName(filePath) ?? filePath;
+        menu.Items.Add("打开", null, (_, _) => OpenFilePath(filePath));
+        menu.Items.Add("在文件夹中显示", null, (_, _) => RunPathCommand(filePath, folder, FileCommand.Reveal));
+        menu.Items.Add("打开方式…", null, (_, _) => RunPathCommand(filePath, folder, FileCommand.OpenWith));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add("复制文件", null, (_, _) => RunPathCommand(filePath, folder, FileCommand.CopyFile));
+        menu.Items.Add("复制文件路径", null, (_, _) => CopyPath(filePath));
+        menu.Items.Add("复制文件名", null, (_, _) => CopyPath(Path.GetFileName(filePath)));
+        menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_favorites.ContainsFile(filePath) ? "取消收藏此文件" : "★ 收藏此文件", null, (_, _) => ToggleFileFavorite(filePath));
+        return menu;
+    }
+
+    void ICapsuleHost.ToggleMonitoring() => ToggleMonitor();
+
+    void ICapsuleHost.OpenSettingsDialog() => OpenSettings();
+
+    void ICapsuleHost.ShowHistoryDialog() => ShowActivityHistory();
+
+    void ICapsuleHost.ShowDiagnosticsDialog() => ShowDiagnostics();
+
+    void ICapsuleHost.ClearRecent() => ClearActivities();
+
+    void ICapsuleHost.AddFavoriteFolderDialog() => OpenAddFavoriteDialog();
+
+    void ICapsuleHost.AuthorizeMonitoring() => AuthorizeMonitor();
+
+    void ICapsuleHost.ExitApplication() => BeginInvoke(Close);
+
+    void ICapsuleHost.HandleDroppedPaths(string[] paths) => HandleDroppedPaths(paths, fromMainWindow: false);
+
+    void ICapsuleHost.SaveCapsuleLocation(Point location) => SaveFloatingPosition(location);
 
     private void CopyLatestFolderPath()
     {
@@ -1874,16 +2003,15 @@ public sealed class MainForm : Form
         ShowInTaskbar = false;
         _floatingModeActive = true;
         Hide();
-        _floatingForm.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
-        UpdateFloatingFavorites();
         Point? savedLocation = _settings.FloatingLeft is int left && _settings.FloatingTop is int top
             ? new Point(left, top)
             : null;
         _floatingForm.ShowAt(savedLocation);
         SyncPinnedFolderForms();
-        SyncFavoriteFilesForm();
+        PushCapsule();
     }
 
+    /// <summary>原“恢复主窗口”：现在改为展开并固定悬浮舱面板。</summary>
     private void RestoreMainWindow()
     {
         if (_isClosing)
@@ -1891,58 +2019,17 @@ public sealed class MainForm : Form
             return;
         }
 
-        _restoreFloatingAfterTaskbarMinimize = false;
-        var restoreBounds = _mainWindowRestoreBounds;
-        var restoreState = _mainWindowRestoreState == FormWindowState.Minimized
-            ? FormWindowState.Normal
-            : _mainWindowRestoreState;
-        _wasNativeMinimized = false;
-        _floatingModeActive = false;
-        _floatingForm?.Hide();
-        HidePinnedFolderForms();
-        SyncFavoriteFilesForm();
-        ShowInTaskbar = true;
-        Show();
-        _ = ShowWindow(Handle, 9);
-        WindowState = restoreState;
-        if (restoreState == FormWindowState.Normal && IsUsableWindowBounds(restoreBounds))
+        if (!_floatingModeActive)
         {
-            Bounds = ClampWindowBounds(restoreBounds);
+            EnterFloatingMode();
         }
 
-        RenderCurrentMainView();
-        BringToFront();
-        Activate();
+        _floatingForm?.ExpandPinned();
     }
 
     private void MinimizeMainWindow()
     {
-        if (_isClosing)
-        {
-            return;
-        }
-
-        var restoreBounds = _mainWindowRestoreBounds;
-        var restoreState = _mainWindowRestoreState == FormWindowState.Minimized
-            ? FormWindowState.Normal
-            : _mainWindowRestoreState;
-
-        _floatingModeActive = false;
-        _floatingForm?.Hide();
-        HidePinnedFolderForms();
-        SyncFavoriteFilesForm();
-
-        ShowInTaskbar = true;
-        WindowState = restoreState;
-        if (restoreState == FormWindowState.Normal && IsUsableWindowBounds(restoreBounds))
-        {
-            Bounds = ClampWindowBounds(restoreBounds);
-        }
-
-        _restoreFloatingAfterTaskbarMinimize = true;
-        _wasNativeMinimized = false;
-        WindowState = FormWindowState.Minimized;
-        Show();
+        _floatingForm?.CollapseNow();
     }
 
     private void RenderCurrentMainView()
@@ -2023,7 +2110,7 @@ public sealed class MainForm : Form
             _latestFile = null;
         }
 
-        _floatingForm?.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
+        PushCapsule();
         UpdateFloatingFavorites();
         _ = RefreshLatestFileAsync(_latestFolder);
     }
@@ -2034,7 +2121,7 @@ public sealed class MainForm : Form
         if (folder is null)
         {
             _latestFile = null;
-            _floatingForm?.UpdateLatest(null, null, _isMonitoring);
+            PushCapsule();
             return;
         }
 
@@ -2051,13 +2138,12 @@ public sealed class MainForm : Form
         }
 
         _latestFile = selected;
-        _floatingForm?.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
+        PushCapsule();
     }
 
     private void UpdateFloatingFavorites()
     {
-        var count = AppSettings.NormalizeFloatingFavoriteCount(_settings.FloatingFavoriteCount);
-        _floatingForm?.UpdateFavorites(_favorites.OrderedItems.Take(count).ToArray());
+        PushCapsule();
     }
 
     private void SyncPinnedFolderForms()
@@ -2159,6 +2245,7 @@ public sealed class MainForm : Form
     private bool IsExcluded(string path)
     {
         return (_settings.FilterCommonNoise && PathRules.ContainsCommonNoiseDirectory(path))
+            || PathRules.ContainsDevDirectory(path)
             || PathRules.MatchesAny(path, _excludedPaths);
     }
 
@@ -2183,19 +2270,19 @@ public sealed class MainForm : Form
         };
         if (_isMonitoring && agentNote is not null)
         {
-            SetStatus($"监视未就绪 · {agentNote}");
+            SetStatusLine($"监视未就绪 · {agentNote}");
         }
         else if (_isMonitoring)
         {
             var suffix = attention > 0 ? $" · {healthy} 正常 / {attention} 待恢复" : string.Empty;
-            SetStatus(drives.Length == 0 ? $"监视中{suffix}" : $"监视中 · {string.Join(" ", drives)}{suffix}");
+            SetStatusLine(drives.Length == 0 ? $"监视中{suffix}" : $"监视中 · {string.Join(" ", drives)}{suffix}");
         }
         else
         {
-            SetStatus(drives.Length == 0 ? "未选择硬盘" : $"已选择 · {string.Join(" ", drives)}");
+            SetStatusLine(drives.Length == 0 ? "未选择硬盘 · 在设置里选择要监视的磁盘" : $"已暂停 · {string.Join(" ", drives)}");
         }
 
-        _floatingForm?.UpdateLatest(_latestFolder, _latestFile, _isMonitoring);
+        PushCapsule();
         _trayIcon?.UpdateMonitoring(_isMonitoring, statuses);
         UpdateMonitorBanner(statuses);
     }
@@ -2280,27 +2367,24 @@ public sealed class MainForm : Form
     private void ShowDiagnostics()
     {
         using var dialog = new DiagnosticsForm(() => DiagnosticsSnapshot.Create(_monitor.VolumeStatuses, MonitorModeText()));
-        if (Visible && WindowState != FormWindowState.Minimized)
-        {
-            dialog.ShowDialog(this);
-        }
-        else
-        {
-            dialog.ShowDialog();
-        }
+        ShowOwnedDialog(dialog);
     }
 
     private void ShowActivityHistory()
     {
         using var dialog = new ActivityHistoryForm(() => _activityHistory.Items, OpenActivityFolder);
-        if (Visible && WindowState != FormWindowState.Minimized)
-        {
-            dialog.ShowDialog(this);
-        }
-        else
-        {
-            dialog.ShowDialog();
-        }
+        ShowOwnedDialog(dialog);
+    }
+
+    private IWin32Window DialogOwner => _floatingForm is { Visible: true } capsule ? capsule : this;
+
+    /// <summary>从悬浮舱打开的对话框：居中显示，期间悬浮舱保持展开。</summary>
+    private DialogResult ShowOwnedDialog(Form dialog)
+    {
+        using var hold = _floatingForm?.HoldOpen();
+        dialog.StartPosition = FormStartPosition.CenterScreen;
+        dialog.ShowInTaskbar = true;
+        return dialog.ShowDialog(DialogOwner);
     }
 
     private IReadOnlyList<string> RegisterConfiguredHotKeys()
@@ -2323,9 +2407,22 @@ public sealed class MainForm : Form
         });
     }
 
+    /// <summary>一次性的操作提示（已复制、已收藏、错误等）：在悬浮舱底栏短暂显示。</summary>
     private void SetStatus(string message)
     {
         _statusLabel.Text = message;
+        _floatingForm?.ShowMessage(message);
+    }
+
+    /// <summary>持续的监视状态文字：显示在悬浮舱底栏。</summary>
+    private void SetStatusLine(string message)
+    {
+        _statusLabel.Text = message;
+        if (_capsuleStatus != message)
+        {
+            _capsuleStatus = message;
+            PushCapsule();
+        }
     }
 
     private static void BeginControlUpdate(Control control)

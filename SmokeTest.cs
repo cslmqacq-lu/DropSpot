@@ -393,6 +393,34 @@ public static class SmokeTest
             return 161;
         }
 
+        // 扩展名过滤：开发 / AI 编程预设 + 自定义扩展名
+        try
+        {
+            PathRules.ConfigureFileFilter(true, new[] { "psd, *.tmp；.PNG" });
+            var parsed = PathRules.ParseExtensions(new[] { "psd, *.tmp；.PNG" });
+            if (!PathRules.IsFilteredFileName(@"G:\app\__init__.pyc")
+                || !PathRules.IsFilteredFileName("package-lock.json")
+                || !PathRules.IsFilteredFileName("主视觉.PSD")
+                || PathRules.IsFilteredFileName("报告.docx")
+                || !PathRules.ContainsDevDirectory(@"G:\repo\obj\Debug\a.dll")
+                || !PathRules.ContainsCommonNoiseDirectory(@"C:\Users\me\.claude\projects\x.jsonl")
+                || !PathRules.IsHiddenFromRecent(@"G:\a\build.log")
+                || parsed.Count != 3 || parsed[0] != ".psd" || parsed[2] != ".png")
+            {
+                return 162;
+            }
+
+            PathRules.ConfigureFileFilter(false, null);
+            if (PathRules.IsFilteredFileName("a.pyc") || PathRules.ContainsDevDirectory(@"G:\repo\obj\a.dll"))
+            {
+                return 163;
+            }
+        }
+        finally
+        {
+            PathRules.ConfigureFileFilter(true, null);
+        }
+
         return 0;
     }
 
@@ -1053,6 +1081,9 @@ public static class SmokeTest
                 || !orderedBottomUp
                 || !infoPopup.Visible
                 || settingsForm.FloatingFavoriteCount != 8
+                || settingsForm.CapsuleOpacity != AppSettings.DefaultCapsuleOpacity
+                || AppSettings.NormalizeCapsuleOpacity(10) != AppSettings.MinCapsuleOpacity
+                || AppSettings.NormalizeCapsuleOpacity(120) != AppSettings.MaxCapsuleOpacity
                 || !settingsForm.StartWithWindows
                 || settingsForm.OpenLatestFolderHotKey.DisplayText() != "Ctrl+Alt+F"
                 || settingsForm.CopyLatestFolderPathHotKey.DisplayText() != "Ctrl+Alt+D"

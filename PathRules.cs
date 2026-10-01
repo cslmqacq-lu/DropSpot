@@ -24,8 +24,135 @@ internal static class PathRules
         ".git", ".svn", ".hg",
         "node_modules", "__pycache__", ".pytest_cache", ".mypy_cache",
         ".vs", ".idea", ".gradle", ".next", ".nuxt", ".parcel-cache", ".turbo",
-        "GPUCache", "Code Cache", "ShaderCache", "GrShaderCache", "DawnCache", "DawnGraphiteCache", "Crashpad"
+        "GPUCache", "Code Cache", "ShaderCache", "GrShaderCache", "DawnCache", "DawnGraphiteCache", "Crashpad",
+        // AI 编程工具的工作目录
+        ".claude", ".codex", ".cursor", ".superpowers", ".continue", ".windsurf", ".aider.tags.cache.v3",
+        ".venv", "venv", ".ruff_cache", ".tox", ".nyc_output"
     };
+
+    // ---------- 开发 / AI 编程预设：编译产物、缓存、日志、锁文件 ----------
+
+    private static readonly string[] DevExtensionList =
+    {
+        ".pyc", ".pyo", ".class", ".o", ".obj", ".pdb", ".ilk", ".idb", ".ipch", ".tlog",
+        ".cache", ".tsbuildinfo", ".map", ".log", ".lock", ".swp", ".swo", ".bak", ".orig", ".rej",
+        ".suo", ".etl", ".dmp", ".db-journal", ".db-wal", ".db-shm", ".sqlite-journal"
+    };
+
+    private static readonly HashSet<string> DevFileNames = new(
+        new[]
+        {
+            "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "Cargo.lock", "poetry.lock",
+            "composer.lock", "Gemfile.lock", "packages.lock.json", "project.assets.json"
+        },
+        StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>开发预设额外过滤的目录（构建中间产物）。</summary>
+    private static readonly HashSet<string> DevDirectoryNames = new(new[] { "obj" }, StringComparer.OrdinalIgnoreCase);
+
+    private static FileFilter _fileFilter = new(true, new HashSet<string>(DevExtensionList, StringComparer.OrdinalIgnoreCase));
+
+    /// <summary>界面上展示用的开发预设扩展名。</summary>
+    public static IReadOnlyList<string> DevExtensions => DevExtensionList;
+
+    /// <summary>
+    /// 设置扩展名过滤：<paramref name="filterDevFiles"/> 开启开发 / AI 编程预设，
+    /// <paramref name="extraExtensions"/> 为用户额外隐藏的扩展名。界面进程和后台监视进程各自调用。
+    /// </summary>
+    public static void ConfigureFileFilter(bool filterDevFiles, IEnumerable<string>? extraExtensions)
+    {
+        var extensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (filterDevFiles)
+        {
+            extensions.UnionWith(DevExtensionList);
+        }
+
+        foreach (var extension in ParseExtensions(extraExtensions))
+        {
+            extensions.Add(extension);
+        }
+
+        _fileFilter = new FileFilter(filterDevFiles, extensions);
+    }
+
+    /// <summary>把 “log, .tmp  *.bak” 这类输入整理成 [".log", ".tmp", ".bak"]。</summary>
+    public static IReadOnlyList<string> ParseExtensions(IEnumerable<string>? raw)
+    {
+        var result = new List<string>();
+        foreach (var item in raw ?? Array.Empty<string>())
+        {
+            foreach (var part in (item ?? string.Empty).Split(new[] { ',', '，', ';', '；', ' ', '\t', '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                var extension = part.Trim().TrimStart('*');
+                if (extension.Length == 0)
+                {
+                    continue;
+                }
+
+                if (!extension.StartsWith('.'))
+                {
+                    extension = "." + extension;
+                }
+
+                if (extension.Length > 1
+                    && extension.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
+                    && !result.Contains(extension, StringComparer.OrdinalIgnoreCase))
+                {
+                    result.Add(extension.ToLowerInvariant());
+                }
+            }
+        }
+
+        return result;
+    }
+
+    /// <summary>按扩展名 / 文件名规则应当隐藏的文件（开发产物、日志、锁文件、用户自定义扩展名）。</summary>
+    public static bool IsFilteredFileName(string? fileName)
+    {
+        if (string.IsNullOrWhiteSpace(fileName))
+        {
+            return false;
+        }
+
+        var filter = _fileFilter;
+        var name = Path.GetFileName(fileName);
+        if (filter.DevPreset && DevFileNames.Contains(name))
+        {
+            return true;
+        }
+
+        var extension = Path.GetExtension(name);
+        return extension.Length > 0 && filter.Extensions.Contains(extension);
+    }
+
+    /// <summary>开发预设开启时，路径中是否含有构建中间目录（obj）。</summary>
+    public static bool ContainsDevDirectory(string? path)
+    {
+        if (!_fileFilter.DevPreset || string.IsNullOrWhiteSpace(path))
+        {
+            return false;
+        }
+
+        foreach (var segment in path.Split(Separators, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (DevDirectoryNames.Contains(segment))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// <summary>这个文件是否应该出现在“最近文件”里（临时文件和被过滤的扩展名都不显示）。</summary>
+    public static bool IsHiddenFromRecent(string? filePath)
+    {
+        return IsTemporaryFileName(filePath)
+            || IsFilteredFileName(filePath)
+            || ContainsDevDirectory(filePath);
+    }
+
+    private sealed record FileFilter(bool DevPreset, HashSet<string> Extensions);
 
     private static readonly HashSet<string> NoiseDirectoryNames = new(NoiseDirectoryNameList, StringComparer.OrdinalIgnoreCase);
 

@@ -107,7 +107,9 @@ public sealed class FolderCard : UserControl
         _folder = folder;
         _isLatest = isLatest;
         Width = width;
-        Height = expanded ? 104 + Math.Min(3, folder.Files.Count) * 30 : 88;
+        // 最近文件只显示没被过滤的（临时文件、开发产物、自定义隐藏扩展名都不显示）
+        var visibleFiles = folder.Files.Where(file => !PathRules.IsHiddenFromRecent(file.FilePath)).Take(_fileRows.Length).ToArray();
+        Height = expanded ? 104 + visibleFiles.Length * 30 : 88;
 
         _nameLabel.Text = folder.DisplayName;
         _pathLabel.Text = CompactPath(folder.FolderPath);
@@ -119,7 +121,7 @@ public sealed class FolderCard : UserControl
 
         for (var index = 0; index < _fileRows.Length; index++)
         {
-            var record = folder.Files.ElementAtOrDefault(index);
+            var record = visibleFiles.ElementAtOrDefault(index);
             _fileRows[index].Update(record, width);
         }
 

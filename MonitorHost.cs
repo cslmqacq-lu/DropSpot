@@ -40,6 +40,8 @@ public sealed class MonitorHost : IDisposable
     private string[] _scopes = Array.Empty<string>();
     private string[] _excluded = Array.Empty<string>();
     private bool _filterNoise = true;
+    private bool _filterDev = true;
+    private string[] _hiddenExtensions = Array.Empty<string>();
     private bool _running;
     private bool _disposed;
     private DateTime _lastLaunchAttempt = DateTime.MinValue;
@@ -120,7 +122,7 @@ public sealed class MonitorHost : IDisposable
 
             if (_running)
             {
-                Send(new AgentMessage { Type = AgentMessage.Exclusions, Excluded = _excluded.ToList(), FilterNoise = value });
+                Send(ExclusionsMessage());
             }
         }
     }
@@ -176,8 +178,29 @@ public sealed class MonitorHost : IDisposable
             return;
         }
 
-        Send(new AgentMessage { Type = AgentMessage.Exclusions, Excluded = _excluded.ToList(), FilterNoise = _filterNoise });
+        Send(ExclusionsMessage());
     }
+
+    /// <summary>设置扩展名过滤（开发 / AI 编程预设 + 自定义扩展名），界面和后台监视进程同时生效。</summary>
+    public void SetFileFilter(bool filterDevFiles, IEnumerable<string> hiddenExtensions)
+    {
+        _filterDev = filterDevFiles;
+        _hiddenExtensions = PathRules.ParseExtensions(hiddenExtensions).ToArray();
+        PathRules.ConfigureFileFilter(_filterDev, _hiddenExtensions);
+        if (_inProcess is null && _running)
+        {
+            Send(ExclusionsMessage());
+        }
+    }
+
+    private AgentMessage ExclusionsMessage() => new()
+    {
+        Type = AgentMessage.Exclusions,
+        Excluded = _excluded.ToList(),
+        FilterNoise = _filterNoise,
+        FilterDev = _filterDev,
+        HiddenExtensions = _hiddenExtensions.ToList()
+    };
 
     /// <summary>
     /// 授权后台监视：以管理员身份启动一次监视进程（会弹出 UAC），它会注册免确认的计划任务并直接开始工作。
@@ -407,7 +430,9 @@ public sealed class MonitorHost : IDisposable
             Type = AgentMessage.Config,
             Scopes = _scopes.ToList(),
             Excluded = _excluded.ToList(),
-            FilterNoise = _filterNoise
+            FilterNoise = _filterNoise,
+            FilterDev = _filterDev,
+            HiddenExtensions = _hiddenExtensions.ToList()
         });
     }
 

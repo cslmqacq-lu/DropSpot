@@ -188,7 +188,9 @@ public sealed class FileMonitorService : IDisposable
 
     internal static bool ShouldIgnore(string folderPath, string fileName)
     {
-        if (PathRules.IsTemporaryFileName(fileName))
+        if (PathRules.IsTemporaryFileName(fileName)
+            || PathRules.IsFilteredFileName(fileName)
+            || PathRules.ContainsDevDirectory(folderPath))
         {
             return true;
         }
