@@ -1,0 +1,208 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>DropSpot intro</title>
+<style>
+:root{
+  --bg:#0B111A; --panel:#101722; --border:#2A3648; --tile:#141D2A; --tileb:#24324A;
+  --text:#E6EDF5; --muted:#8A9BB0; --faint:#6F8199; --green:#3DDC84; --gold:#F2C45C; --golddark:#C9922B;
+}
+*{box-sizing:border-box}
+html,body{margin:0;width:1920px;height:1080px;overflow:hidden;background:var(--bg);font-family:'Noto Sans CJK SC',sans-serif;color:var(--text)}
+#stage{position:absolute;inset:0;overflow:hidden}
+#bg{position:absolute;inset:-200px;background:
+  radial-gradient(900px 640px at 28% 22%, #17263f 0%, rgba(23,38,63,0) 70%),
+  radial-gradient(900px 640px at 78% 88%, #0f2a20 0%, rgba(15,42,32,0) 70%), var(--bg)}
+#dots{position:absolute;inset:0;background-image:radial-gradient(rgba(255,255,255,.045) 1.6px, transparent 1.7px);background-size:44px 44px}
+.scene{position:absolute;inset:0}
+.abs{position:absolute}
+.headline{position:absolute;left:0;right:0;top:92px;text-align:center;font-size:62px;font-weight:700;letter-spacing:1px}
+.headline2{position:absolute;left:0;right:0;top:176px;text-align:center;font-size:40px;font-weight:500;color:var(--muted)}
+.green{color:var(--green)} .gold{color:var(--gold)}
+.sub{position:absolute;left:50%;bottom:52px;transform:translateX(-50%);font-size:36px;font-weight:500;padding:12px 34px;border-radius:999px;background:rgba(4,8,14,.78);color:#fff;white-space:nowrap;letter-spacing:1px;box-shadow:0 8px 30px rgba(0,0,0,.35)}
+
+/* ---------- 悬浮舱组件（软件界面 2 倍还原） ---------- */
+.cap{position:absolute;background:var(--panel);border:2px solid var(--border);box-shadow:0 30px 90px rgba(0,0,0,.55), inset 0 1px 0 rgba(255,255,255,.06)}
+.rest{width:208px;height:192px;border-radius:44px}
+.rest .fold{position:absolute;left:56px;top:26px;width:96px;height:80px}
+.rest .nm{position:absolute;left:10px;right:10px;top:122px;text-align:center;font-size:23px;font-weight:500}
+.dot{position:absolute;width:12px;height:12px;border-radius:50%;background:var(--green);box-shadow:0 0 12px rgba(61,220,132,.8)}
+.rest .dot{right:22px;top:22px}
+.toast{width:544px;height:192px;border-radius:44px;border-color:#2E6B4A}
+.toast .fold{position:absolute;left:32px;top:56px;width:96px;height:80px}
+.toast .t1{position:absolute;left:156px;top:38px;font-size:19px;color:var(--green);font-weight:700;letter-spacing:1px}
+.toast .t2{position:absolute;left:156px;top:68px;font-size:32px;font-weight:700}
+.toast .t3{position:absolute;left:156px;top:118px;font-size:22px;color:var(--muted)}
+.toast .dot{left:118px;top:52px;width:14px;height:14px}
+.edge{width:28px;height:128px;border-radius:14px}
+.edge .dot{left:8px;top:22px;width:10px;height:10px}
+.edge .bar{position:absolute;left:12px;top:50px;width:5px;height:48px;border-radius:3px;background:#3A4C66}
+
+.panel{width:640px;border-radius:32px;padding:22px 26px 0}
+.ph{display:flex;align-items:center;gap:18px;height:74px}
+.ph .fold{width:64px;height:54px;flex:none}
+.ph .nm{font-size:29px;font-weight:700}
+.ph .meta{font-size:19px;color:var(--muted);margin-top:2px}
+.ph .meta i{display:inline-block;width:10px;height:10px;border-radius:50%;background:var(--green);margin-right:8px;vertical-align:1px}
+.ph .ic{margin-left:auto;display:flex;gap:18px}
+.ph .ic b{width:26px;height:26px;border:2.5px solid #5D6F88;border-radius:6px;display:block}
+.rows{position:relative;height:258px;margin-top:10px}
+.row{position:absolute;left:-10px;right:-10px;height:84px;display:flex;align-items:center;gap:18px;padding:0 10px;border-radius:16px}
+.badge{width:62px;height:46px;border-radius:12px;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;letter-spacing:.5px;flex:none}
+.row .n{font-size:26px;font-weight:700}
+.row .m{font-size:19px;color:var(--muted);margin-top:2px}
+.sec{display:flex;align-items:center;gap:14px;margin-top:14px;min-height:56px}
+.sec .lb{font-size:19px;color:var(--faint);width:52px;flex:none}
+.chip{height:46px;padding:0 18px;border-radius:23px;background:var(--tile);border:2px solid var(--tileb);display:flex;align-items:center;gap:10px;font-size:21px}
+.chip i{width:9px;height:9px;border-radius:50%;background:var(--green)}
+.favs{display:flex;gap:12px}
+.tile{width:92px;height:110px;border-radius:16px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;position:relative}
+.tile .fold{width:52px;height:44px}
+.tile span{font-size:17px;color:var(--muted);max-width:86px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tile.more{border:2px solid var(--tileb);background:var(--tile)}
+.tile.more b{font-size:28px;font-weight:700}
+.stars{display:flex;align-items:center;gap:12px;font-size:21px;color:var(--muted);height:52px;margin-top:6px}
+.stars .st{color:var(--gold);font-size:26px}
+.pf{display:flex;align-items:center;height:70px;margin-top:14px;border-top:2px solid #1C2738;font-size:19px;color:var(--muted);gap:10px}
+.pf i{width:11px;height:11px;border-radius:50%;background:var(--green)}
+.pf .ic{margin-left:auto;display:flex;gap:26px;align-items:center}
+.pf .ic b{display:block;width:22px;height:22px;border-radius:5px;border:2.5px solid #5D6F88}
+
+/* 文件图标 */
+.file{position:absolute;width:92px;height:114px}
+/* 系统窗口（资源管理器、聊天、对话框） */
+.win{position:absolute;background:#F5F7FB;border-radius:18px;box-shadow:0 30px 90px rgba(0,0,0,.55);overflow:hidden;color:#1D2633}
+.win .tb{height:52px;background:#E9EEF5;display:flex;align-items:center;padding:0 20px;font-size:20px;font-weight:700;gap:12px}
+.win .tb svg{width:32px;height:27px;flex:none}
+.win .tb .ctl{margin-left:auto;display:flex;gap:26px;color:#6B7A8F;font-weight:400}
+.addr{height:46px;margin:12px 18px;border-radius:10px;background:#fff;border:2px solid #D5DDE8;display:flex;align-items:center;padding:0 16px;font-size:19px;color:#4A5668}
+.flist{position:absolute;left:230px;right:18px;top:122px}
+.flist .h{display:flex;font-size:17px;color:#7A8799;height:38px;align-items:center;border-bottom:1px solid #DCE3EC}
+.flist .r{display:flex;align-items:center;height:58px;font-size:20px;border-radius:8px;padding:0 6px;position:relative}
+.flist .c1{width:420px;display:flex;align-items:center;gap:12px} .flist .c2{width:230px;color:#6B7A8F} .flist .c3{color:#6B7A8F;white-space:nowrap}
+.mini{width:26px;height:32px;border-radius:5px;flex:none;position:relative}
+.nav{position:absolute;left:0;top:122px;width:212px;bottom:0;border-right:1px solid #DCE3EC;padding:10px 18px;font-size:19px;color:#4A5668;line-height:52px}
+
+.key{position:absolute;height:104px;border-radius:20px;background:#1E2A3D;border:2px solid #33445E;border-bottom:10px solid #0E1622;display:flex;align-items:center;justify-content:center;font-size:36px;font-weight:700;color:#DCE6F2;box-shadow:0 14px 30px rgba(0,0,0,.4)}
+.plus{position:absolute;font-size:44px;color:var(--faint);font-weight:300}
+.lbl{position:absolute;font-size:40px;font-weight:700;white-space:nowrap}
+.callout{position:absolute;font-size:34px;font-weight:700;white-space:nowrap;padding:10px 24px;border-radius:14px;background:rgba(16,23,34,.9)}
+.zone{position:absolute;border-radius:18px;border:4px solid}
+.pill{position:absolute;padding:12px 26px;border-radius:999px;font-size:30px;font-weight:700;background:#1A2434;border:2px solid #2B3A52;white-space:nowrap}
+.ripple{position:absolute;width:40px;height:40px;border-radius:50%;border:5px solid var(--green)}
+</style>
+</head>
+<body>
+<div id="stage">
+  <div id="bg"></div><div id="dots"></div>
+  <div id="root"></div>
+</div>
+<script>
+// ======================= 工具 =======================
+const root = document.getElementById('root');
+const used = new WeakMap();
+function A(el, t0, dur, frames, opts = {}) {
+  if (typeof el === 'string') el = document.querySelector(el);
+  if (!el) throw new Error('missing element');
+  const props = new Set();
+  frames.forEach(f => Object.keys(f).forEach(k => { if (k !== 'offset' && k !== 'easing') props.add(k); }));
+  let s = used.get(el); if (!s) { s = new Set(); used.set(el, s); }
+  const first = [...props].every(p => !s.has(p));
+  props.forEach(p => s.add(p));
+  el.animate(frames, { delay: t0 * 1000, duration: dur * 1000, fill: first ? 'both' : 'forwards',
+    easing: opts.easing || 'cubic-bezier(.22,1,.36,1)', iterations: opts.iterations || 1 });
+}
+const EASE_BACK = 'cubic-bezier(.34,1.56,.64,1)';
+const EASE_IN = 'cubic-bezier(.55,0,.75,.2)';
+const EASE_IO = 'cubic-bezier(.65,0,.35,1)';
+function h(html) { const d = document.createElement('div'); d.innerHTML = html.trim(); return d.firstElementChild; }
+function add(parent, html, style) { const el = h(html); if (style) Object.assign(el.style, style); parent.appendChild(el); return el; }
+function scene(t0, t1, id) {
+  const el = add(root, `<div class="scene" id="${id}"></div>`);
+  A(el, t0, 0.35, [{ opacity: 0 }, { opacity: 1 }]);
+  A(el, t1 - 0.35, 0.35, [{ opacity: 1 }, { opacity: 0 }]);
+  return el;
+}
+function fadeIn(el, t, d = .45) { A(el, t, d, [{ opacity: 0 }, { opacity: 1 }]); }
+function fadeOut(el, t, d = .35) { A(el, t, d, [{ opacity: 1 }, { opacity: 0 }]); }
+function popIn(el, t, d = .55, base = '') {
+  A(el, t, d, [{ opacity: 0, transform: `${base} scale(.4)` }, { opacity: 1, transform: `${base} scale(1)` }], { easing: EASE_BACK });
+}
+function riseIn(el, t, d = .55, dy = 40) {
+  A(el, t, d, [{ opacity: 0, transform: `translateY(${dy}px)` }, { opacity: 1, transform: 'translateY(0)' }]);
+}
+
+// ---------- 图形 ----------
+function folderSvg(cls = 'fold') {
+  return `<svg class="${cls}" viewBox="0 0 48 40"><rect x="4" y="2" width="40" height="36" rx="4" fill="#C9922B"/>
+  <rect x="8" y="9" width="32" height="20" rx="2" fill="#F4F1EA" opacity=".92"/>
+  <rect x="4" y="11" width="40" height="27" rx="4" fill="#F2C45C"/>
+  <rect x="8" y="14.5" width="32" height="1.6" rx=".8" fill="#FFE3A0" opacity=".75"/></svg>`;
+}
+const EXT = { XLSX: '#3DDC84', PPTX: '#F59E6B', PDF: '#F87171', DOCX: '#6EA8FE', JPG: '#C9A7FF', LOG: '#6F7C8E', TMP: '#6F7C8E', OBJ: '#6F7C8E', CACHE: '#6F7C8E' };
+function fileSvg(ext, w = 92, face = false) {
+  const c = EXT[ext] || '#8A9BB0';
+  const hgt = w * 1.24;
+  const fs = ext.length > 4 ? 15 : 18;
+  return `<svg width="${w}" height="${hgt}" viewBox="0 0 92 114">
+   <path d="M10 2h50l30 30v70a10 10 0 0 1-10 10H10A10 10 0 0 1 0 102V12A10 10 0 0 1 10 2z" fill="#EEF2F7"/>
+   <path d="M60 2v22a8 8 0 0 0 8 8h22z" fill="#C9D3E0"/>
+   <rect x="8" y="64" width="${ext.length > 4 ? 66 : 58}" height="30" rx="7" fill="${c}"/>
+   <text x="${ext.length > 4 ? 41 : 37}" y="85" text-anchor="middle" font-family="Noto Sans CJK SC" font-weight="700" font-size="${fs}" fill="#fff">${ext}</text>
+   ${face ? '<circle cx="30" cy="38" r="4.5" fill="#1D2633"/><circle cx="54" cy="38" r="4.5" fill="#1D2633"/><path d="M28 48q14 12 28 0" stroke="#1D2633" stroke-width="4" fill="none" stroke-linecap="round"/>' : ''}
+  </svg>`;
+}
+function cursorSvg() {
+  return `<svg width="46" height="58" viewBox="0 0 23 29"><path d="M2 2l0 22 6-5 4 9 4-2-4-9 8-1z" fill="#fff" stroke="#111" stroke-width="1.6" stroke-linejoin="round"/></svg>`;
+}
+function handSvg() {
+  return `<svg width="70" height="84" viewBox="0 0 35 42"><path d="M12 4a3 3 0 0 1 6 0v13l1-.2a3 3 0 0 1 5 1.2 3 3 0 0 1 5 1.5 3 3 0 0 1 4 2.5v8c0 6-4 11-11 11h-3c-4 0-7-2-9-5L4 27a3 3 0 0 1 4.5-4L12 26z" fill="#fff" stroke="#111" stroke-width="1.8" stroke-linejoin="round"/></svg>`;
+}
+function badge(ext) { const c = EXT[ext]; return `<div class="badge" style="background:${c}26;color:${c}">${ext}</div>`; }
+
+// 悬浮舱：收起卡片
+function restCard(name = '财务') {
+  return `<div class="cap rest">${folderSvg()}<div class="dot"></div><div class="nm">${name}</div></div>`;
+}
+function toastCard(file, folder) {
+  return `<div class="cap toast">${folderSvg()}<div class="dot"></div><div class="t1">新文件写入</div><div class="t2">${file}</div><div class="t3">→ ${folder}</div></div>`;
+}
+// 悬浮舱：展开面板
+function panelHtml(o = {}) {
+  const rows = o.rows || [['XLSX', '报表.xlsx', '刚刚 · 财务'], ['PDF', '合同.pdf', '3 分钟 · 客户资料'], ['PPTX', '季度汇报.pptx', '12 分钟 · 财务']];
+  const favs = o.favs || ['合同', '素材图', '周报', '2026 项目'];
+  return `<div class="cap panel">
+   <div class="ph">${folderSvg()}<div><div class="nm">${o.title || '财务'}</div><div class="meta"><i></i>最近活跃 · 刚刚 · 12 次</div></div><div class="ic"><b></b><b></b></div></div>
+   <div class="rows">${rows.map((r, i) => `<div class="row r${i}" style="top:${i * 86}px">${badge(r[0])}<div><div class="n">${r[1]}</div><div class="m">${r[2]}</div></div></div>`).join('')}</div>
+   <div class="sec act"><div class="lb">活跃</div><div class="chip"><i></i>财务</div><div class="chip"><i></i>客户资料</div><div class="chip">下载</div><div class="chip">+4</div></div>
+   <div class="sec fav"><div class="lb">收藏</div><div class="favs">${favs.map((f, i) => `<div class="tile t${i}">${folderSvg()}<span>${f}</span></div>`).join('')}<div class="tile more"><b>+${o.more || 2}</b><span>更多</span></div></div></div>
+   ${o.stars ? `<div class="stars"><span class="st">★</span>合同.pdf<span style="color:#5D6F88">→ 客户资料</span></div>` : ''}
+   <div class="pf"><i></i>监视中 · D:<div class="ic"><b></b><b style="border-radius:50%"></b><b></b></div></div>
+  </div>`;
+}
+
+// 扁平小人（SVG，手臂可以单独动）
+function personSvg(id) {
+  return `<svg id="${id}" class="abs" width="300" height="380" viewBox="0 0 300 380" style="overflow:visible">
+   <g class="body">
+    <path d="M60 380 Q60 250 150 240 Q240 250 240 380Z" fill="#4C8DFF"/>
+    <path d="M128 240 L150 270 L172 240Z" fill="#E8F0FF"/>
+    <rect x="135" y="205" width="30" height="40" rx="12" fill="#E9B98F"/>
+    <circle cx="150" cy="160" r="62" fill="#F2C9A0"/>
+    <path d="M88 158 Q86 92 150 94 Q214 92 212 158 Q200 120 150 124 Q104 122 88 158Z" fill="#2B2F3A"/>
+    <g class="face"><circle cx="128" cy="165" r="6" fill="#2B2F3A"/><circle cx="172" cy="165" r="6" fill="#2B2F3A"/>
+    <path class="mouth" d="M134 192 Q150 202 166 192" stroke="#2B2F3A" stroke-width="5" fill="none" stroke-linecap="round"/></g>
+    <g class="sweat" opacity="0"><path d="M214 128 q8 14 0 20 q-8-6 0-20z" fill="#7CC4FF"/></g>
+   </g>
+   <g class="armL" style="transform-origin:92px 280px"><rect x="40" y="270" width="64" height="26" rx="13" fill="#4C8DFF"/><circle cx="40" cy="283" r="15" fill="#F2C9A0"/></g>
+   <g class="armR" style="transform-origin:208px 280px"><rect x="196" y="270" width="64" height="26" rx="13" fill="#4C8DFF"/><circle cx="260" cy="283" r="15" fill="#F2C9A0"/></g>
+  </svg>`;
+}
+</script>
+<script src="scenes.js"></script>
+<script src="scenes2.js"></script>
+<script src="scenes3.js"></script>
+<script src="tail.js"></script>
+</body>
+</html>
