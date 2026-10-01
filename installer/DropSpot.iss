@@ -1,5 +1,5 @@
 ﻿#ifndef MyAppVersion
-  #define MyAppVersion "1.0.7"
+  #define MyAppVersion "1.0.8"
 #endif
 
 #define MyAppName "DropSpot"
@@ -69,6 +69,9 @@ end;
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
   StopProcessByName('DiskWriteWatcher.exe');
+  { 关闭界面后，以管理员权限运行的后台监视进程会在管道断开后自行退出 }
+  StopProcessByName('DropSpot.exe');
+  Sleep(2000);
   Result := '';
 end;
 
@@ -81,9 +84,15 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   StartupCommand: String;
+  ResultCode: Integer;
 begin
   if CurUninstallStep = usUninstall then
   begin
+    StopProcessByName('DropSpot.exe');
+    Sleep(1500);
+    { 删除后台监视任务；没有管理员权限时可能失败，忽略即可 }
+    Exec(ExpandConstant('{sys}\schtasks.exe'), '/Delete /TN "DropSpot Monitor" /F', '', SW_HIDE,
+      ewWaitUntilTerminated, ResultCode);
     if RegQueryStringValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DropSpot', StartupCommand)
       and (CompareText(StartupCommand, '"' + ExpandConstant('{app}\{#MyAppExeName}') + '" --startup') = 0) then
       RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'DropSpot');
